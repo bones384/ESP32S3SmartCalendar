@@ -12,7 +12,7 @@
 #include <esp_adc/adc_oneshot.h>
 String password = "Mumia!24";
 String ssid = "foxnet253";
-
+#include <HTTPClient.h>
 #include <GxEPD2_3C.h>
 #include <SPI.h>
 #include <GxEPD2_BW.h>
@@ -339,10 +339,6 @@ delay(100);
     }
     Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
 
-    //disconnect WiFi as it's no longer needed
-    WiFi.disconnect(true);
-    WiFi.mode(WIFI_OFF);
-
     pinMode(35,OUTPUT);
     pinMode(16,OUTPUT);
     pinMode(17,OUTPUT);
@@ -402,6 +398,37 @@ fram.enterSleep();
 
     digitalWrite(2,1);
 
+    HTTPClient http;
+
+    String serverPath =
+
+"https://www.googleapis.com/calendar/v3/calendars/primary/events";
+    // Your Domain name with URL path or IP address with path
+    http.begin(serverPath.c_str());
+
+    // If you need Node-RED/server authentication, insert user and password below
+    //http.setAuthorization("REPLACE_WITH_SERVER_USERNAME", "REPLACE_WITH_SERVER_PASSWORD");
+
+    // Send HTTP GET request
+    int httpResponseCode = http.GET();
+    String payload;
+    if (httpResponseCode>0) {
+        Serial.print("HTTP Response code: ");
+        Serial.println(httpResponseCode);
+        payload = http.getString();
+        Serial.println(payload);
+    }
+    else {
+        Serial.print("Error code: ");
+        Serial.println(httpResponseCode);
+    }
+    // Free resources
+    http.end();
+
+    //disconnect WiFi as it's no longer needed
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+
     display.init(115200, true, 2, false);
     display.setRotation(0); // optional, 0-3 depending on orientation
 
@@ -416,6 +443,7 @@ fram.enterSleep();
     display.print(humidity.relative_humidity); display.println(" %rH");
     display.print("Val: "); display.println((int)val);
     display.print("Vbat: "); display.print(v_batt); display.println("V");
+    display.print(payload); display.println("");
     display.display();
     display.hibernate();
 
@@ -495,7 +523,6 @@ fram.enterSleep();
     } else {
         Serial.println("PSRAM not available!");
     }
-//https://
     Getter getter1;
     getter1.connect("api.open-meteo.com");
     JsonDocument JSON = getter1.get("/v1/forecast?latitude=50.348&longitude=18.9328&daily=weather_code,temperature_2m_min,temperature_2m_max,apparent_temperature_min,apparent_temperature_max,sunset,sunrise,uv_index_max,rain_sum,showers_sum,snowfall_sum,precipitation_sum,precipitation_hours,precipitation_probability_max,wind_speed_10m_max&hourly=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation_probability,precipitation,weather_code,surface_pressure,wind_speed_10m,wind_gusts_10m,visibility,rain,showers,snowfall,snow_depth,cloud_cover,is_day&current=weather_code,temperature_2m,is_day,precipitation,wind_speed_10m,wind_direction_10m&forecast_days=14&timezone=Europe/Warsaw");

@@ -17,6 +17,7 @@ String ssid = "foxnet253";
 #include <SPI.h>
 #include <GxEPD2_BW.h>
 #include <ArduinoJson.h>
+#include <Preferences.h>
 // Pins
 #define CS_PIN    35
 #define FRAM_CS   5
@@ -31,114 +32,12 @@ String ssid = "foxnet253";
 #define BTN_ENTER  6
 
 GxEPD2_BW<GxEPD2_420_GDEY042T81, GxEPD2_420_GDEY042T81::HEIGHT> display(GxEPD2_420_GDEY042T81(CS_PIN, DC_PIN, RST_PIN, BUSY_PIN));
-
-struct Getter
+void printStackUsage(const char* tag)
 {
-    WiFiClient client;
-    bool connected = false;
-    std::string url;
-    void connect(const std::string& URL, const int port = 80)
-    {
-        client.connect(URL.c_str(),port);
-        url=URL;
-    }
-    void sendHeader(const std::string& name,const std::string& value)
-    {
-        client.println((name + ": " + value).c_str());
-    }
-    JsonDocument get(const std::string& resource_path)
-    {
-        client.println(("GET " + resource_path + " HTTP/1.1").c_str());
-        client.println(("Host: " + url).c_str());
-        client.println("Accept: */*");
-        client.println();
-
-        std::string head, body;
-        std::map<std::string,std::string> headers;
-        std::string start_line = client.readStringUntil('\n').c_str();
-
-        while (true)
-        {
-            if (client.available())
-            {
-                std::string temp;
-                temp = client.readStringUntil('\n').c_str();
-                if (temp=="\r")
-                {
-                    break;
-                }
-                head+=temp;
-                Serial.print(temp.c_str());
-                auto pos = temp.find(':');
-                headers[temp.substr(0,pos)] = temp.substr(pos+2,temp.length()-pos-3);
-            };
-
-        }
-        bool chunked = false;
-        if (headers.find("Content-Length")==headers.end())
-        {
-            if (headers.find("Transfer-Encoding")==headers.end())
-            {
-                Serial.println("Invalid Head! No content length nor transfer encoding header!");
-                //throw std::runtime_error("Invalid header!");
-            }
-            if (headers["Transfer-Encoding"]!="chunked")
-            {
-                Serial.println(("Transfer-Encoding values other than chunked are not supported! Got: " + headers.at("Transfer-Encoding")).c_str());
-                while (true) {}
-
-
-            }
-            chunked = true;
-        }
-
-        if (!chunked) {
-            int cl = stoi(headers.at("Content-Length"));
-
-            char* buf = new char[cl];
-            client.readBytes(buf,cl);
-            body.assign(buf,cl);
-            delete [] buf;
-        }
-        else
-        {
-            while (true)
-            {
-                if (client.available())
-                {
-
-
-                        Serial.println("loop");
-                        String ass = client.readStringUntil('\n');
-                        //String ass2 = client.readStringUntil('\n');
-
-                        int chunkSize = std::strtoul(ass.c_str(), nullptr, 16);
-                        if (chunkSize == 0) break;
-                        char* test;
-                        test = new char[chunkSize];
-                        client.readBytes(test, chunkSize);
-                        String ass2;
-                        ass2.concat(test, chunkSize);
-                        delete [] test;
-                        Serial.println(ass);
-                        Serial.println(chunkSize);
-                        Serial.println("mid");
-                        Serial.println(ass2);
-                        Serial.println("end");
-                        body += ass2.c_str();
-
-
-
-                }
-            }
-        }
-        JsonDocument JSON;
-        deserializeJson(JSON,body);
-        return JSON;
-
-    }
-};
-int x;
+    UBaseType_t hw = uxTaskGetStackHighWaterMark(NULL);
+    Serial.printf("[%s] Stack high water mark: %u bytes\n", tag, hw * sizeof(StackType_t));
+}
+int is_manual;
 extern "C" void app_main(void)
 {
     initArduino();
@@ -146,7 +45,7 @@ extern "C" void app_main(void)
     gpio_reset_pin(GPIO_NUM_40);
     gpio_reset_pin(GPIO_NUM_41);
     gpio_set_direction(GPIO_NUM_40,GPIO_MODE_INPUT);
-    x = gpio_get_level(GPIO_NUM_40);
+    is_manual = gpio_get_level(GPIO_NUM_40);
 
 
     gpio_reset_pin(GPIO_NUM_41);
@@ -154,19 +53,32 @@ extern "C" void app_main(void)
     gpio_set_direction(GPIO_NUM_21, GPIO_MODE_OUTPUT_OD);
     gpio_pullup_dis(GPIO_NUM_41);
     gpio_pullup_dis(GPIO_NUM_21);
-   // gpio_dump_io_configuration(stdout, SOC_GPIO_VALID_GPIO_MASK);
 
     gpio_set_level(GPIO_NUM_21, 0); //HOLD
-    //delay(1000);
     gpio_set_level(GPIO_NUM_41, 0);
-    //delay(50);
-    //delay(5000);
-   // gpio_set_level(GPIO_NUM_21, 1); // stop hold
 
-    setup();
 
+
+    TaskHandle_t setupHandle = nullptr;
+    xTaskCreate(
+            setup,
+            "arduino_setup",
+            20480, //8k might be enough?
+            xTaskGetCurrentTaskHandle(),
+            5,
+            &setupHandle
+    );
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     while (true) {
-        loop();
+        xTaskCreate(
+                loop,
+                "arduino_loop",
+                20480, //8k might be enough?
+                xTaskGetCurrentTaskHandle(),
+                5,
+                &setupHandle
+        );
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         vTaskDelay(1);
     }
 }
@@ -174,59 +86,8 @@ extern "C" void app_main(void)
 Adafruit_SHT4x sht4 = Adafruit_SHT4x();
 Adafruit_FRAM_SPI fram = Adafruit_FRAM_SPI(FRAM_CS);
 
+Preferences prefs;
 
-void printLocalTime()
-{
-    struct tm timeinfo;
-    if(!getLocalTime(&timeinfo)){
-        Serial.println("Failed to obtain time");
-        return;
-    }
-    Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
-    Serial.print("Day of week: ");
-    Serial.println(&timeinfo, "%A");
-    Serial.print("Month: ");
-    Serial.println(&timeinfo, "%B");
-    Serial.print("Day of Month: ");
-    Serial.println(&timeinfo, "%d");
-    Serial.print("Year: ");
-    Serial.println(&timeinfo, "%Y");
-    Serial.print("Hour: ");
-    Serial.println(&timeinfo, "%H");
-    Serial.print("Hour (12 hour format): ");
-    Serial.println(&timeinfo, "%I");
-    Serial.print("Minute: ");
-    Serial.println(&timeinfo, "%M");
-    Serial.print("Second: ");
-    Serial.println(&timeinfo, "%S");
-
-    Serial.println("Time variables");
-    char timeHour[3];
-    strftime(timeHour,3, "%H", &timeinfo);
-    Serial.println(timeHour);
-    char timeWeekDay[10];
-    strftime(timeWeekDay,10, "%A", &timeinfo);
-    Serial.println(timeWeekDay);
-    Serial.println();
-}
-volatile char flag = 'x';
-
-static volatile uint32_t isr_count = 0;
-static volatile int64_t last_isr_time = 0;
-
-static void IRAM_ATTR button_isr(void *arg)
-{
-    int64_t now = esp_timer_get_time(); // µs
-    if (now - last_isr_time > 30000) {  // 30 ms debounce
-        last_isr_time = now;
-        isr_count++;
-    }
-}
-void IRAM_ATTR handleButtonUp() { flag=('U'); }
-void IRAM_ATTR handleButtonDown(void* arg) { flag=('D'); }
-void IRAM_ATTR handleButtonLeft() { flag=('L'); }
-void IRAM_ATTR handleButtonRight() { flag=('R'); }
-void IRAM_ATTR handleButtonEnter() { flag=('E'); }
 const char* ntpServer = "pool.ntp.org";
 const long  gmtOffset_sec = 3600;
 const int   daylightOffset_sec = 3600;
@@ -288,54 +149,313 @@ float battery_voltage(void)
     int adc_mv = adc_read_mv();
     return (adc_mv/1000.f) * 2.0f;
 }
-void setup() {
-   //
+
+//Manual or first poweron of battery pack
+void manual()
+{
+    Serial.println("Manual!");
+}
+
+void automatic()
+{
+    Serial.println("Auto!");
+}
+void end()
+{
+    prefs.end();
+    Serial.println("Buhbye!");
+    gpio_set_level(GPIO_NUM_41,1); //DONE
+    gpio_set_level(GPIO_NUM_21,1); //stop hold
+}
+constexpr uint8_t wifi_retries = 20;
+bool connect()
+{
+    if(WiFi.status()!=WL_CONNECTED)
+    {
+        char retries = wifi_retries;
+        Serial.print("Connecting to ");
+        Serial.println(ssid);
+        WiFi.begin(ssid, password);
+        while (WiFi.status() != WL_CONNECTED) {
+            delay(500);
+            Serial.print(".");
+            retries -= 1;
+            if (retries == 0) {
+                Serial.println("");
+                Serial.print("!!!WiFi connection failed after "); Serial.print(wifi_retries); Serial.println(" tries.");
+                return false;
+            }
+        }
+        Serial.println("");
+        Serial.println("WiFi connected.");
+    }
+    return true;
+}
+
+constexpr char CLIENT_ID[] = "CLIENT_ID_HERE";
+constexpr char CLIENT_SECRET[] = "CLIENT_SECRET_HERE"; //! THIS SHOULD BE ENCRYPTED AND STORED IN NVS!!!
+constexpr char regenurl[] = "https://oauth2.googleapis.com/token";
+
+bool regenTokenPair()
+{
+
+    Serial.println("Google API connection expired or not initialised. Please enter your access code: ");
+    String AUTHORIZATION_CODE;
+    AUTHORIZATION_CODE.reserve(256);
 
 
-   // pinMode(41, OUTPUT);
-    //pinMode(21, OUTPUT_OPEN_DRAIN);
-    //digitalWrite(21,0); //hold true
-    //gpio_set_level(GPIO_NUM_41, 0);
-    //gpio_set_level(GPIO_NUM_21, 0); //HOLD
+    while (!Serial.available()) {delay(10);}
+    while (true)
+    {
+        if (Serial.available()){
+            char c = Serial.read();
+            if (c == '\r')
+            {
+                break;
+            }
+            AUTHORIZATION_CODE+=c;
+            Serial.print(c);
+
+        }
+        delay(10);
+    }
+
+    Serial.println();
+    Serial.print("Got code:");
+    Serial.println(AUTHORIZATION_CODE);
+    Serial.println("Token generation beginning.");
+    if(!connect())
+    {
+        Serial.println("WiFi connection failed - token regeneration aborted.");
+        return false;
+    }
+    // Send get for code
+    String payload;
+    payload.reserve(256);
+     payload = String("client_id=") + CLIENT_ID +
+                            "&client_secret=" + CLIENT_SECRET +
+                            "&redirect_uri=urn:ietf:wg:oauth:2.0:oob"
+                            "&code=" + AUTHORIZATION_CODE +
+                            "&grant_type=authorization_code";
+    HTTPClient http;
+    http.setReuse(false);
+    http.begin(regenurl);
+    Serial.print("Requesting URL ... ");
+    Serial.print("Requesting URL .1.. ");
+
+    http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+    int httpResponseCode = http.POST(payload);
+    Serial.print("Requesting URL ..2. ");
+
+    if (httpResponseCode>0) {
+        Serial.print("HTTP Response code: ");
+        Serial.println(httpResponseCode);
+        String response = http.getString();
+        http.end();
+        Serial.println(response);
+
+        StaticJsonDocument<480> doc;
+
+        DeserializationError error = deserializeJson(doc, response);
+        if (error) {
+            Serial.print("deserializeJson() failed: ");
+            Serial.println(error.c_str());
+            http.end();
+            return false;
+        } else {
+            // Extract values
+            const char* access_token = doc["access_token"];
+            const char* refresh_token = doc["refresh_token"];
+
+            Serial.print("AT: "); Serial.println(access_token);
+            Serial.print("RT: "); Serial.println(refresh_token);
+
+            // Store in NVS
+            prefs.putString("ACCESS_TOKEN",access_token);
+            prefs.putString("REFRESH_TOKEN",refresh_token);
+            http.end();
+            return true;
+        }
+
+    }
+    else {
+        Serial.print("Error code: ");
+        Serial.println(httpResponseCode);
+    }
+
+    // Free resources
+    http.end();
+    return false;
+
+}
+
+const char refreshurl[] = "https://oauth2.googleapis.com/token";
+bool refreshToken()
+{
+    //? If this is called, we have a valid refresh token in NVS.
+    Serial.println("Token refresh beginning.");
+    if(!connect())
+    {
+        Serial.println("WiFi connection failed - token refresh aborted.");
+        return false;
+    }
+    // Send post for refresh
+    String payload;
+    payload.reserve(256);
+    payload = String("client_id=") + CLIENT_ID +
+                            "&client_secret=" + CLIENT_SECRET +
+                            "&refresh_token=" + prefs.getString("REFRESH_TOKEN") +
+                            "&grant_type=refresh_token";
+    HTTPClient http;
+    http.setReuse(false);
+    printStackUsage("before");
+    http.begin(refreshurl);
+    http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+    int httpResponseCode = http.POST(payload);
+    printStackUsage("afta");
+    if (httpResponseCode>0) {
+        Serial.print("HTTP Response code: ");
+        Serial.println(httpResponseCode);
+        String response = http.getString();
+        http.end();
+        Serial.println(response);
+
+        StaticJsonDocument<480> doc;
+
+        DeserializationError error = deserializeJson(doc, response);
+        if (error) {
+            Serial.print("deserializeJson() failed: ");
+            Serial.println(error.c_str());
+            http.end();
+            return false;
+        } else {
+            // Extract values
+            const char* access_token = doc["access_token"];
+
+            Serial.print("AT: "); Serial.println(access_token);
+
+            // Store in NVS
+            prefs.putString("ACCESS_TOKEN",access_token);
+            http.end();
+            return true;
+        }
+
+    }
+    else {
+        Serial.print("Error code: ");
+        Serial.println(httpResponseCode);
+    }
+
+    // Free resources
+    http.end();
+    return false;
+}
+#define INCLUDE_vTaskDelete 1
+void refreshTask(void *arg)
+{
+    TaskHandle_t creator = static_cast<TaskHandle_t>(arg);
+    refreshToken();
+    Serial.println("Task finished");
+    xTaskNotifyGive(creator);
+    vTaskDelete(nullptr);   // delete this task when done
+
+}
+String getAccessToken()
+{
+    //? Check if we have an access token in NVS.
+    if(prefs.isKey("ACCESS_TOKEN"))
+    {
+        //? We do -> return it.
+        return prefs.getString("ACCESS_TOKEN");
+    }
+    //? We don't. check if we have a refresh token in NVS.
+    Serial.println("Access token expired.");
+    if(prefs.isKey("REFRESH_TOKEN"))
+    {
+        Serial.println("Renewing with refresh token...");
+        //? We do -> use it to generate a new access token.
+        if(refreshToken()) return prefs.getString("ACCESS_TOKEN");
+        //? Refresh failed!
+        Serial.println("Renewal failed! Regenerate token pair!");
+        return "";
+    }
+    //? No token to return
+    Serial.println("No access token stored! Regenerate token pair!");
+    return "";
+}
+
+
+
+void setup(void *arg) {
 
     gpio_set_direction(GPIO_NUM_40,GPIO_MODE_INPUT); //drain cap
     gpio_pulldown_en(GPIO_NUM_40);
-    //digitalWrite(41, 0); //done
     Serial.begin(115200);
-
     Serial.println("Woken up!");
+    Serial.print("Pin 40 (WAKEREASON): ");
+    Serial.println(is_manual);
+    printStackUsage("beginning of setup")
+    prefs.begin("main",false);
+    // BRANCH: WAKEREASON
+    if(is_manual) manual();
+    else automatic();
 
-    Serial.print("Pin 40: ");
-    Serial.println(x);
-    Serial.println(x);
-
-    pinMode(BTN_UP,     INPUT_PULLUP);
+    //TEST SPACE!
+    //TODO: MOVE PAIRGEN TO TASK TOO
+    pinMode(BTN_UP,    INPUT_PULLUP);
     pinMode(BTN_DOWN,  INPUT_PULLUP);
     pinMode(BTN_LEFT,  INPUT_PULLUP);
     pinMode(BTN_RIGHT, INPUT_PULLUP);
     pinMode(BTN_ENTER, INPUT_PULLUP);
 
 
+    //test();
 
+    if(is_manual)
+    {
+       //if (!refreshToken()) {regenTokenPair();}
+//        TaskHandle_t oauthHandle = nullptr;
+//        xTaskCreate(
+//            refreshTask,
+//            "oauth",
+//            16384, //8k might be enough?
+//            xTaskGetCurrentTaskHandle(),
+//            5,
+//            &oauthHandle
+//        );
+//
+//        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
-    Serial.print("Connecting to ");
-    Serial.println(ssid);
-    WiFi.begin(ssid, password);
-    while (WiFi.status() != WL_CONNECTED) {
-        delay(500);
-        Serial.print(".");
+refreshToken()
+
     }
-    Serial.println("");
-    Serial.println("WiFi connected.");
-    gpio_set_level(GPIO_NUM_41,1); // DONE
 
+    Serial.println(getAccessToken());
+
+    // Send HTTP GET request
+
+
+    //disconnect WiFi as it's no longer needed
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+
+
+    end();
+    TaskHandle_t creator = static_cast<TaskHandle_t>(arg);
+
+    xTaskNotifyGive(creator);
+    vTaskDelete(nullptr);   // delete this task when done
+
+    return;
+}
+void test()
+{
     // Init and get the time
     configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-    //printLocalTime();
     struct tm timeinfo;
     while(!getLocalTime(&timeinfo)){
         Serial.println("Failed to obtain time");
-delay(100);
+        delay(100);
     }
     Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
 
@@ -370,64 +490,26 @@ delay(100);
     {
         Serial.print("FRAM NOT FOUND!!!!!!!!");
 
-    }fram.exitSleep();
+    }
+
+    fram.exitSleep();
     fram.writeEnable(1);
     uint32_t addr = 12;
     uint8_t valtowrite = 12;
     fram.write8(addr,valtowrite);
     uint8_t val ;
     val = fram.read8(addr);
-fram.enterSleep();
+    fram.enterSleep();
 
     // measure bat voltage
-    //analogReadResolution(12);
-    //analogSetAttenuation(ADC_11db);
-
-    //adc1_config_width(ADC_WIDTH_BIT_12);
-    //adc1_config_channel_atten(ADC1_CHANNEL_0,ADC_ATTEN_DB_12);
-    //adc1_get_raw(ADC1_CHANNEL_0);
     pinMode(2,OUTPUT_OPEN_DRAIN);
     adc_init();
 
     digitalWrite(2,0);
     delay(200);
-    //uint16_t raw = analogRead(1);
-    //float v_adc = (raw) * (3.9 / 4095.0);
-    //float v_batt = v_adc * 2.0; // 500k/500k divider
     float v_batt = battery_voltage();
 
-    digitalWrite(2,1);
-
-    HTTPClient http;
-
-    String serverPath =
-
-"https://www.googleapis.com/calendar/v3/calendars/primary/events";
-    // Your Domain name with URL path or IP address with path
-    http.begin(serverPath.c_str());
-
-    // If you need Node-RED/server authentication, insert user and password below
-    //http.setAuthorization("REPLACE_WITH_SERVER_USERNAME", "REPLACE_WITH_SERVER_PASSWORD");
-
-    // Send HTTP GET request
-    int httpResponseCode = http.GET();
-    String payload;
-    if (httpResponseCode>0) {
-        Serial.print("HTTP Response code: ");
-        Serial.println(httpResponseCode);
-        payload = http.getString();
-        Serial.println(payload);
-    }
-    else {
-        Serial.print("Error code: ");
-        Serial.println(httpResponseCode);
-    }
-    // Free resources
-    http.end();
-
-    //disconnect WiFi as it's no longer needed
-    WiFi.disconnect(true);
-    WiFi.mode(WIFI_OFF);
+    digitalWrite(2,1); // stop current through divider
 
     display.init(115200, true, 2, false);
     display.setRotation(0); // optional, 0-3 depending on orientation
@@ -443,127 +525,12 @@ fram.enterSleep();
     display.print(humidity.relative_humidity); display.println(" %rH");
     display.print("Val: "); display.println((int)val);
     display.print("Vbat: "); display.print(v_batt); display.println("V");
-    display.print(payload); display.println("");
     display.display();
     display.hibernate();
-
-
-
-    //delay(5000);
-    Serial.println("Buhbye!");
-    gpio_set_level(GPIO_NUM_21,1); //stop hold
-   // attachInterrupt(BTN_UP, handleButtonUp, FALLING);
-    //attachInterrupt(BTN_DOWN, handleButtonDown, FALLING);
-    //attachInterrupt(BTN_LEFT, handleButtonLeft, FALLING);
-    //attachInterrupt(BTN_RIGHT, handleButtonRight, FALLING);
-
-    gpio_config_t io_conf = {
-        .pin_bit_mask = 1ULL << GPIO_NUM_36,
-        .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_POSEDGE,   // FALLING
-    };
-    gpio_config(&io_conf);
-
-    gpio_install_isr_service(ESP_INTR_FLAG_IRAM);
-    gpio_isr_handler_add(GPIO_NUM_36, button_isr, NULL);
-
-    //attachInterrupt(BTN_ENTER, handleButtonEnter, FALLING);
-    return;
-    pinMode(35, OUTPUT);
-    pinMode(38,  OUTPUT);
-    digitalWrite(38,0);
-    pinMode(16, OUTPUT);
-    pinMode(17, OUTPUT);
-   // while (!Serial)
-       // delay(10);     // will pause Zero, Leonardo, etc until serial console opens
-
-    Serial.println("Adafruit SHT4x test");
-    if (! sht4.begin()) {
-        Serial.println("Couldn't find SHT4x");
-       // while (1) delay(1);
-    }
-    Serial.println("Found SHT4x sensor");
-    Serial.print("Serial number 0x");
-    Serial.println(sht4.readSerial(), HEX);
-
-    // You can have 3 different precisions, higher precision takes longer
-    sht4.setPrecision(SHT4X_HIGH_PRECISION);
-    switch (sht4.getPrecision()) {
-    case SHT4X_HIGH_PRECISION:
-        Serial.println("High precision");
-        break;
-    case SHT4X_MED_PRECISION:
-        Serial.println("Med precision");
-        break;
-    case SHT4X_LOW_PRECISION:
-        Serial.println("Low precision");
-        break;
-    }
-
-    Serial.println("Initialising wifi...");
-
-    WiFi.begin(ssid,password);
-    Serial.println("Connecting...");
-
-    while (WiFi.status()!=WL_CONNECTED)
-    {
-        if (WiFi.status()==WL_CONNECT_FAILED)
-        {
-            Serial.println("Failed to connect!");
-            while (true) {};
-        }
-    }
-    Serial.println("Connected!");
-    if (psramFound()) {
-        Serial.println("PSRAM is enabled!");
-        Serial.printf("Total PSRAM: %lu bytes\n", ESP.getPsramSize());
-        Serial.printf("Free PSRAM:  %lu bytes\n", ESP.getFreePsram());
-    } else {
-        Serial.println("PSRAM not available!");
-    }
-    Getter getter1;
-    getter1.connect("api.open-meteo.com");
-    JsonDocument JSON = getter1.get("/v1/forecast?latitude=50.348&longitude=18.9328&daily=weather_code,temperature_2m_min,temperature_2m_max,apparent_temperature_min,apparent_temperature_max,sunset,sunrise,uv_index_max,rain_sum,showers_sum,snowfall_sum,precipitation_sum,precipitation_hours,precipitation_probability_max,wind_speed_10m_max&hourly=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation_probability,precipitation,weather_code,surface_pressure,wind_speed_10m,wind_gusts_10m,visibility,rain,showers,snowfall,snow_depth,cloud_cover,is_day&current=weather_code,temperature_2m,is_day,precipitation,wind_speed_10m,wind_direction_10m&forecast_days=14&timezone=Europe/Warsaw");
-    String a;
-    serializeJson(JSON, a);
-
-    Serial.println(a);
-
-    //display.init(115200, true, 2, false);
-    //display.setRotation(0); // optional, 0-3 depending on orientation
-
-    /*display.fillScreen(GxEPD_WHITE);
-    display.setCursor(0, 0);
-    display.setTextColor(GxEPD_BLACK);
-    display.setTextSize(2);
-    display.println("turning off now");
-    display.display();
-    display.hibernate();
-*/
 }
+void loop(void *arg) {
 
-void loop() {
-// write your code here
-    //sensors_event_t humidity, temp;
-
-    /*uint32_t timestamp = millis();
-    sht4.getEvent(&humidity, &temp);// populate temp and humidity objects with fresh data
-    timestamp = millis() - timestamp;
-    Serial.println(PIN_SDA)
-    Serial.print("Temperature: "); Serial.print(temp.temperature); Serial.println(" degrees C");
-    Serial.print("Humidity: "); Serial.print(humidity.relative_humidity); Serial.println("% rH");
-
-    Serial.print("Read duration (ms): ");
-    Serial.println(timestamp);
-*/
-    static uint32_t last_count = 0;
-    if (isr_count != last_count) {
-        Serial.printf("Button press count = %lu", isr_count);
-        last_count = isr_count;
-    }
-    vTaskDelay(pdMS_TO_TICKS(10));   // delay(1000);
-    //esp_deep_sleep_start();
-
+    TaskHandle_t creator = static_cast<TaskHandle_t>(arg);
+    xTaskNotifyGive(creator);
+    vTaskDelete(nullptr);   // delete this task when done
 }

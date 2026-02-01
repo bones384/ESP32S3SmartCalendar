@@ -18,6 +18,7 @@ String ssid = "foxnet253";
 #include <GxEPD2_BW.h>
 #include <ArduinoJson.h>
 #include <Preferences.h>
+#include <time.h>
 // Pins
 #define CS_PIN    35
 #define FRAM_CS   5
@@ -38,6 +39,8 @@ void printStackUsage(const char* tag)
     Serial.printf("[%s] Stack high water mark: %u bytes\n", tag, hw * sizeof(StackType_t));
 }
 int is_manual;
+void loop(void* arg);
+void setup(void* arg);
 extern "C" void app_main(void)
 {
     initArduino();
@@ -55,7 +58,7 @@ extern "C" void app_main(void)
     gpio_pullup_dis(GPIO_NUM_21);
 
     gpio_set_level(GPIO_NUM_21, 0); //HOLD
-    gpio_set_level(GPIO_NUM_41, 0);
+    gpio_set_level(GPIO_NUM_41, 0); //DONE
 
 
 
@@ -247,7 +250,7 @@ bool regenTokenPair()
     int httpResponseCode = http.POST(payload);
     Serial.print("Requesting URL ..2. ");
 
-    if (httpResponseCode>0) {
+    if (httpResponseCode==200) {
         Serial.print("HTTP Response code: ");
         Serial.println(httpResponseCode);
         String response = http.getString();
@@ -313,7 +316,7 @@ bool refreshToken()
     http.addHeader("Content-Type", "application/x-www-form-urlencoded");
     int httpResponseCode = http.POST(payload);
     printStackUsage("afta");
-    if (httpResponseCode>0) {
+    if (httpResponseCode==200) {
         Serial.print("HTTP Response code: ");
         Serial.println(httpResponseCode);
         String response = http.getString();
@@ -350,6 +353,22 @@ bool refreshToken()
     http.end();
     return false;
 }
+bool syncTime()
+{
+    // Init and get the time
+    connect();
+    configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+    setenv("TZ", "CET-1CEST,M3.5.0/2,M10.5.0/3", 1);
+    tzset();
+    struct tm timeinfo;
+    while(!getLocalTime(&timeinfo)){
+        Serial.println("Failed to obtain time");
+        return false;
+    }
+    Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
+    return true;
+}
+
 #define INCLUDE_vTaskDelete 1
 void refreshTask(void *arg)
 {
@@ -383,9 +402,189 @@ String getAccessToken()
     Serial.println("No access token stored! Regenerate token pair!");
     return "";
 }
+bool timeset = false;
+tm getTime()
+{
+    if (!timeset) syncTime();
 
+    time_t now;
+    time(&now);
 
+    struct tm local_tm;
+    localtime_r(&now, &local_tm);
+    return local_tm;
+}
+constexpr char calendarurl[] = "https://www.googleapis.com/calendar/v3/";
+constexpr char listurl[] = "calendars/primary/events?";
 
+void fixTZ(char *buf) {
+    if (size_t len = strlen(buf); len > 2) {
+        memmove(buf + len - 1, buf + len - 2, 3);
+        buf[len - 2] = ':';
+    }
+}
+
+struct Event
+{
+    String summary = "Unknown summary";
+    String description = "Unknown description";
+    tm startTime;
+    tm endTime;
+};
+struct Date
+{
+    int yday;
+    std::vector<Event> events;
+};
+JsonDocument getCalendarEvents()
+{
+    Serial.println("Event retrieval beginning.");
+
+    Serial.println("Current day:");
+    auto time = getTime();
+
+    struct tm start_tm = time;
+    start_tm.tm_hour = 0;
+    start_tm.tm_min  = 0;
+    start_tm.tm_sec  = 0;
+
+    struct tm end_tm = start_tm;
+   // end_tm.tm_mday += 1;  // tomorrow 00:00
+    end_tm.tm_year +=1;
+
+    time_t start_t = mktime(&start_tm);
+    time_t end_t   = mktime(&end_tm);
+
+    char start_buf[32];
+    char end_buf[32];
+
+    strftime(start_buf, sizeof(start_buf),
+             "%Y-%m-%dT%H:%M:%S%z", localtime(&start_t));
+    fixTZ(start_buf);
+    Serial.println(start_buf);
+    strftime(end_buf, sizeof(end_buf),
+             "%Y-%m-%dT%H:%M:%S%z", localtime(&end_t));
+    Serial.println("Tomorrow:");
+    fixTZ(end_buf);
+    Serial.println(end_buf);
+    if(!connect())
+    {
+        Serial.println("WiFi connection failed - event retrieval aborted.");
+        return JsonDocument();
+    }
+    // Send post for refresh
+    String payload;
+    payload.reserve(256);
+    payload = String(calendarurl) + listurl + "singleEvents=True&orderBy=startTime";
+    payload += String("&timeMin=") + String(start_buf);
+    payload += String("&timeMax=") + String(end_buf);
+    Serial.println(payload);
+    payload.replace("+","%2B");
+    HTTPClient http;
+    http.setReuse(false);
+    http.setAuthorizationType("Bearer");
+    http.setAuthorization(getAccessToken().c_str());
+    http.begin(payload);
+    http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+    int httpResponseCode = http.GET();
+    if (httpResponseCode==200) {
+        Serial.print("HTTP Response code: ");
+        Serial.println(httpResponseCode);
+        String response = http.getString();
+        http.end();
+        Serial.println(response);
+
+        JsonDocument doc;
+
+        DeserializationError error = deserializeJson(doc, response);
+        if (error) {
+            Serial.print("deserializeJson() failed: ");
+            Serial.println(error.c_str());
+            http.end();
+            return JsonDocument();
+        } else {
+            // Extract values
+
+            http.end();
+            return doc["items"];
+        }
+
+    }
+    else {
+        if (httpResponseCode==401) {if (refreshToken()) return getCalendarEvents();}
+        Serial.print("Error code: ");
+        Serial.println(httpResponseCode);
+        return JsonDocument();
+    }
+
+    // Free resources
+    http.end();
+    return JsonDocument();
+    //return false;
+
+}
+
+tm rfc3339ToTm(const char *rfc3339)
+{
+    struct tm tm = {};
+    char datetime[20];   // YYYY-MM-DDTHH:MM:SS
+    char tzsign;
+    int tzh, tzm;
+
+    // Copy datetime part
+    memcpy(datetime, rfc3339, 19);
+    datetime[19] = '\0';
+
+    // Parse base time
+    if (!strptime(datetime, "%Y-%m-%dT%H:%M:%S", &tm)) {
+        return tm;
+    }
+
+    // Parse timezone
+    if (sscanf(rfc3339 + 19, "%c%2d:%2d", &tzsign, &tzh, &tzm) != 3) {
+        return (tm);
+    }
+
+    int offset = (tzh * 3600) + (tzm * 60);
+    if (tzsign == '+') offset = -offset;
+
+    // Convert as UTC
+    time_t t = mktime(&tm);
+    t -= offset;
+    localtime_r(&t, &tm);
+    return tm;
+}
+
+std::vector<Event> events;
+void loadEvents(JsonDocument doc)
+{
+    Serial.println("Loading events...");
+    for (JsonVariant item : doc.as<JsonArray>())
+    {
+        Event event;
+        event.summary = item["summary"].as<String>();
+        event.description = item["summary"].as<String>();
+        if (item["start"]["date"].is<JsonVariant>())
+        {
+            //Whole day event.
+            //! May last multiple days?
+            String s = item["start"]["date"].as<String>() + "T00:00:00+00:00";
+            auto ts = rfc3339ToTm( item["start"]["date"]);
+            event.startTime = ts;
+            ts.tm_hour=23;
+            ts.tm_min=59;
+            event.endTime = ts;
+        }
+        else
+        {
+
+            //Single day event
+            event.startTime = rfc3339ToTm( item["start"]["dateTime"]);
+            event.endTime = rfc3339ToTm( item["end"]["dateTime"]);
+        }
+        events.push_back(event);
+    }
+}
 void setup(void *arg) {
 
     gpio_set_direction(GPIO_NUM_40,GPIO_MODE_INPUT); //drain cap
@@ -394,14 +593,13 @@ void setup(void *arg) {
     Serial.println("Woken up!");
     Serial.print("Pin 40 (WAKEREASON): ");
     Serial.println(is_manual);
-    printStackUsage("beginning of setup")
+    printStackUsage("beginning of setup");
     prefs.begin("main",false);
     // BRANCH: WAKEREASON
     if(is_manual) manual();
     else automatic();
 
     //TEST SPACE!
-    //TODO: MOVE PAIRGEN TO TASK TOO
     pinMode(BTN_UP,    INPUT_PULLUP);
     pinMode(BTN_DOWN,  INPUT_PULLUP);
     pinMode(BTN_LEFT,  INPUT_PULLUP);
@@ -413,25 +611,19 @@ void setup(void *arg) {
 
     if(is_manual)
     {
-       //if (!refreshToken()) {regenTokenPair();}
-//        TaskHandle_t oauthHandle = nullptr;
-//        xTaskCreate(
-//            refreshTask,
-//            "oauth",
-//            16384, //8k might be enough?
-//            xTaskGetCurrentTaskHandle(),
-//            5,
-//            &oauthHandle
-//        );
-//
-//        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-
-refreshToken()
-
+        refreshToken();
     }
 
-    Serial.println(getAccessToken());
-
+    getTime();
+    loadEvents(getCalendarEvents());
+    for (auto event : events)
+    {
+        Serial.println(event.summary);
+        Serial.println(event.description);
+        Serial.println(&event.startTime, "%A, %B %d %Y %H:%M:%S");
+        Serial.println(&event.endTime, "%A, %B %d %Y %H:%M:%S");
+        Serial.println();
+    }
     // Send HTTP GET request
 
 
@@ -450,7 +642,9 @@ refreshToken()
 }
 void test()
 {
+
     // Init and get the time
+    setenv("TZ", "CET-1CEST,M3.5.0/2,M10.5.0/3", 1);
     configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
     struct tm timeinfo;
     while(!getLocalTime(&timeinfo)){

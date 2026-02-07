@@ -434,7 +434,8 @@ struct Event
 struct Date
 {
     int year;
-    int yday
+    int yday;
+
 };
 
 enum Weather : byte
@@ -510,9 +511,9 @@ struct Forecast
     Weather weather_code_daily; //byte
 
     //(i)Hourly temp
-    float temperature_hourly[24]; // 4 bytes * 24 = 96 bytes
+    std::array<float,24> temperature_hourly; // 4 bytes * 24 = 96 bytes
     //(i)Hourly weather code
-    Weather weather_code_hourly[24]; // 96 bytes
+    std::array<Weather,24> weather_code_hourly; // 96 bytes
     // ~202 bytes per day
     // ~1414 bytes per 7 day forecast
     //(i ~~1.4kB?
@@ -601,42 +602,7 @@ JsonDocument getCalendarEvents()
 
 }
 std::vector<Forecast> forecasts;
-void loadForecast()
-{
-    //1 Get all weather data (1-week for now)
-    auto doc = getForecast();
-    //2 seperate into arrays
-
-    auto weather_code_daily[FORECAST_DAYS] = doc["daily"]["weather_code"].as<JsonArray>();
-    auto temperature_daily_min[FORECAST_DAYS] = doc["daily"]["temperature_2m_min"].as<JsonArray>();
-    auto temperature_daily_max[FORECAST_DAYS] = doc["daily"]["temperature_2m_max"].as<JsonArray>(),
-    auto temperature_hourly_temp[FORECAST_DAYS*24] = doc["hourly"]["temperature_2m"].as<JsonArray>();
-    auto weather_code_hourly_temp[FORECAST_DAYS*24] =  doc["hourly"]["weather_code"].as<JsonArray>();
-    float temperature_hourly[FORECAST_DAYS][24];
-    byte weather_code_hourly[FORECAST_DAYS][24];
-    for(int i = 0; i < FORECAST_DAYS; i ++)
-    {
-
-        for(int j = 0; j < 24 ; j++)
-        {
-            temperature_hourly[i][j] = temperature_hourly_temp[i*24+j];
-            weather_code_hourly[i][j] = weather_code_hourly_temp[i*24+j];
-        }
-
-    }
-    // For all days...
-    for (int i = 0 ; i < FORECAST_DAYS; i ++) {
-        Forecast f = {
-                .weather_code_daily = toWeather(weather_code_daily[i]),
-                .temperature_daily_min = temperature_daily_min[i],
-                .temperature_daily_max = temperature_daily_max[i],
-                .temperature_hourly = temperature_hourly[i],
-                .weather_code_hourly = weather_code_hourly[i]
-        };
-        forecasts.push_back(f);
-    }
-}
-constexpr char forecasturl[] = "http://api.open-meteo.com/v1/forecast?latitude=50.33&longitude=18.9&daily=temperature_2m_max,weather_code,temperature_2m_min,precipitation_probability_max&hourly=temperature_2m,weather_code&timezone=auto"
+constexpr char forecasturl[] = "http://api.open-meteo.com/v1/forecast?latitude=50.33&longitude=18.9&daily=temperature_2m_max,weather_code,temperature_2m_min,precipitation_probability_max&hourly=temperature_2m,weather_code&timezone=auto";
 JsonDocument getForecast()
 {
     Serial.println("Forecast retrieval beginning.");
@@ -648,7 +614,7 @@ JsonDocument getForecast()
     // Send post for refresh
     String payload;
     payload.reserve(256);
-    payload = String(forecasturl)
+    payload = String(forecasturl);
     HTTPClient http;
     http.setReuse(false);
     http.begin(payload);
@@ -681,6 +647,43 @@ JsonDocument getForecast()
         return JsonDocument();
     }
 }
+void loadForecast()
+{
+    //1 Get all weather data (1-week for now)
+    auto doc = getForecast();
+    //2 seperate into arrays
+
+    auto weather_code_daily = doc["daily"]["weather_code"].as<JsonArray>();
+    auto temperature_daily_min = doc["daily"]["temperature_2m_min"].as<JsonArray>();
+    auto temperature_daily_max = doc["daily"]["temperature_2m_max"].as<JsonArray>();
+    auto temperature_hourly_temp = doc["hourly"]["temperature_2m"].as<JsonArray>();
+    auto weather_code_hourly_temp =  doc["hourly"]["weather_code"].as<JsonArray>();
+    std::array<std::array<float,24>,7> temperature_hourly;
+    std::array<std::array<Weather,24>,7> weather_code_hourly;
+    for(int i = 0; i < FORECAST_DAYS; i ++)
+    {
+
+        for(int j = 0; j < 24 ; j++)
+        {
+            temperature_hourly[i][j] = temperature_hourly_temp[i*24+j];
+            weather_code_hourly[i][j] = toWeather(weather_code_hourly_temp[i*24+j]);
+        }
+
+    }
+    // For all days...
+    for (int i = 0 ; i < FORECAST_DAYS; i ++) {
+        Forecast f = {
+                .temperature_daily_max = temperature_daily_max[i],
+            .temperature_daily_min = temperature_daily_min[i],
+            .weather_code_daily = toWeather(weather_code_daily[i]),
+
+                .temperature_hourly = temperature_hourly[i],
+                .weather_code_hourly = weather_code_hourly[i]
+        };
+        forecasts.push_back(f);
+    }
+}
+
 tm rfc3339ToTm(const char *rfc3339)
 {
     struct tm tm = {};
@@ -788,6 +791,32 @@ void setup(void *arg) {
         Serial.println(forecast.weather_code_daily);
     }
 
+    //We now have fresh forecast data and fresh event data - merge it on a per date basis
+    std::multimap<Date, Event> event_map;
+    std::multimap<Date, Forecast> forecast_map;
+    for(auto &event : events)
+    {
+       event_map[{event.startTime.year,event.startTime.yday}] = event;
+    }
+    auto n = getTime();
+    Date now = {
+            .year = n.year,
+            .yday = n.yday
+    };
+    //! fix to handle new year case
+    for(size_t idx = 0; auto forecast : forecasts)
+    {
+        forecast_map[Date(now.year, now.yday+idx)] = forecast;
+    }
+
+    for(auto x: event_map)
+    {
+        Serial.println(x);
+    }
+    for(auto x: forecast_map)
+    {
+        Serial.println(x);
+    }
     //disconnect WiFi as it's no longer needed
     WiFi.disconnect(true);
     WiFi.mode(WIFI_OFF);

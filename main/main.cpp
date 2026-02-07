@@ -7,7 +7,6 @@
 #include <WiFi.h>
 #include <map>
 #include <nvs.h>
-#include <nvs_flash.h>
 #include <driver/rtc_io.h>
 #include <esp_adc/adc_oneshot.h>
 String password = "Mumia!24";
@@ -18,7 +17,7 @@ String ssid = "foxnet253";
 #include <GxEPD2_BW.h>
 #include <ArduinoJson.h>
 #include <Preferences.h>
-#include <time.h>
+#include <ctime>
 // Pins
 #define CS_PIN    35
 #define FRAM_CS   5
@@ -26,6 +25,16 @@ String ssid = "foxnet253";
 #define RST_PIN   16
 #define BUSY_PIN  4
 
+#define DEBUG_SERIAL 0
+#if DEBUG_SERIAL
+#define DBG_PRINT(...) Serial.print(__VA_ARGS__)
+#define DBG_PRINTLN(...) Serial.println(__VA_ARGS__)
+#define DBG_PRINTF(...) Serial.printf(__VA_ARGS__)
+#else
+#define DBG_PRINT(...)
+#define DBG_PRINTLN(...)
+#define DBG_PRINTF(...)
+#endif
 #define BTN_LEFT     39
 #define BTN_DOWN   36
 #define BTN_UP   38
@@ -35,13 +44,13 @@ String ssid = "foxnet253";
 GxEPD2_BW<GxEPD2_420_GDEY042T81, GxEPD2_420_GDEY042T81::HEIGHT> display(GxEPD2_420_GDEY042T81(CS_PIN, DC_PIN, RST_PIN, BUSY_PIN));
 void printStackUsage(const char* tag)
 {
-    UBaseType_t hw = uxTaskGetStackHighWaterMark(NULL);
-    Serial.printf("[%s] Stack high water mark: %u bytes\n", tag, hw * sizeof(StackType_t));
+    UBaseType_t hw = uxTaskGetStackHighWaterMark(nullptr);
+    DBG_PRINTF("[%s] Stack high water mark: %u bytes\n", tag, hw * sizeof(StackType_t));
 }
 int is_manual;
 void loop(void* arg);
 void setup(void* arg);
-extern "C" void app_main(void)
+extern "C" [[noreturn]] void app_main(void)
 {
     initArduino();
 
@@ -86,20 +95,20 @@ extern "C" void app_main(void)
     }
 }
 
-Adafruit_SHT4x sht4 = Adafruit_SHT4x();
-Adafruit_FRAM_SPI fram = Adafruit_FRAM_SPI(FRAM_CS);
+auto sht4 = Adafruit_SHT4x();
+auto fram = Adafruit_FRAM_SPI(FRAM_CS);
 
 Preferences prefs;
 
 const char* ntpServer = "pool.ntp.org";
-const long  gmtOffset_sec = 3600;
-const int   daylightOffset_sec = 3600;
+constexpr long  gmtOffset_sec = 3600;
+constexpr int   daylightOffset_sec = 3600;
 
 static adc_oneshot_unit_handle_t adc_handle;
 static adc_cali_handle_t cali_handle;
 static bool cali_enabled = false;
 
-void adc_init(void)
+void adc_init()
 {
     adc_oneshot_unit_init_cfg_t unit_cfg = {
         .unit_id = ADC_UNIT_1,
@@ -132,7 +141,7 @@ void adc_init(void)
     }
 }
 
-int adc_read_mv(void)
+int adc_read_mv()
 {
     int raw;
     ESP_ERROR_CHECK(adc_oneshot_read(adc_handle, ADC_CHANNEL_0, &raw));
@@ -147,26 +156,26 @@ int adc_read_mv(void)
     return (raw * 3900) / 4095;
 }
 
-float battery_voltage(void)
+float battery_voltage()
 {
-    int adc_mv = adc_read_mv();
+    const int adc_mv = adc_read_mv();
     return (adc_mv/1000.f) * 2.0f;
 }
 
 //Manual or first poweron of battery pack
 void manual()
 {
-    Serial.println("Manual!");
+    DBG_PRINTLN("Manual!");
 }
 
 void automatic()
 {
-    Serial.println("Auto!");
+    DBG_PRINTLN("Auto!");
 }
 void end()
 {
     prefs.end();
-    Serial.println("Buhbye!");
+    DBG_PRINTLN("Buhbye!");
     gpio_set_level(GPIO_NUM_41,1); //DONE
     gpio_set_level(GPIO_NUM_21,1); //stop hold
 }
@@ -176,21 +185,21 @@ bool connect()
     if(WiFi.status()!=WL_CONNECTED)
     {
         char retries = wifi_retries;
-        Serial.print("Connecting to ");
-        Serial.println(ssid);
+        DBG_PRINT("Connecting to ");
+        DBG_PRINTLN(ssid);
         WiFi.begin(ssid, password);
         while (WiFi.status() != WL_CONNECTED) {
             delay(500);
-            Serial.print(".");
+            DBG_PRINT(".");
             retries -= 1;
             if (retries == 0) {
-                Serial.println("");
-                Serial.print("!!!WiFi connection failed after "); Serial.print(wifi_retries); Serial.println(" tries.");
+                DBG_PRINTLN("");
+                DBG_PRINT("!!!WiFi connection failed after "); DBG_PRINT(wifi_retries); DBG_PRINTLN(" tries.");
                 return false;
             }
         }
-        Serial.println("");
-        Serial.println("WiFi connected.");
+        DBG_PRINTLN("");
+        DBG_PRINTLN("WiFi connected.");
     }
     return true;
 }
@@ -202,7 +211,7 @@ constexpr char regenurl[] = "https://oauth2.googleapis.com/token";
 bool regenTokenPair()
 {
 
-    Serial.println("Google API connection expired or not initialised. Please enter your access code: ");
+    DBG_PRINTLN("Google API connection expired or not initialised. Please enter your access code: ");
     String AUTHORIZATION_CODE;
     AUTHORIZATION_CODE.reserve(256);
 
@@ -217,19 +226,19 @@ bool regenTokenPair()
                 break;
             }
             AUTHORIZATION_CODE+=c;
-            Serial.print(c);
+            DBG_PRINT(c);
 
         }
         delay(10);
     }
 
-    Serial.println();
-    Serial.print("Got code:");
-    Serial.println(AUTHORIZATION_CODE);
-    Serial.println("Token generation beginning.");
+    DBG_PRINTLN();
+    DBG_PRINT("Got code:");
+    DBG_PRINTLN(AUTHORIZATION_CODE);
+    DBG_PRINTLN("Token generation beginning.");
     if(!connect())
     {
-        Serial.println("WiFi connection failed - token regeneration aborted.");
+        DBG_PRINTLN("WiFi connection failed - token regeneration aborted.");
         return false;
     }
     // Send get for code
@@ -243,26 +252,24 @@ bool regenTokenPair()
     HTTPClient http;
     http.setReuse(false);
     http.begin(regenurl);
-    Serial.print("Requesting URL ... ");
-    Serial.print("Requesting URL .1.. ");
+    DBG_PRINT("Requesting URL ... ");
+    DBG_PRINT("Requesting URL .1.. ");
 
     http.addHeader("Content-Type", "application/x-www-form-urlencoded");
     int httpResponseCode = http.POST(payload);
-    Serial.print("Requesting URL ..2. ");
+    DBG_PRINT("Requesting URL ..2. ");
 
     if (httpResponseCode==200) {
-        Serial.print("HTTP Response code: ");
-        Serial.println(httpResponseCode);
+        DBG_PRINT("HTTP Response code: ");
+        DBG_PRINTLN(httpResponseCode);
         String response = http.getString();
         http.end();
-        Serial.println(response);
+        DBG_PRINTLN(response);
 
-        StaticJsonDocument<480> doc;
-
-        DeserializationError error = deserializeJson(doc, response);
-        if (error) {
-            Serial.print("deserializeJson() failed: ");
-            Serial.println(error.c_str());
+        JsonDocument doc;
+        if (DeserializationError error = deserializeJson(doc, response)) {
+            DBG_PRINT("deserializeJson() failed: ");
+            DBG_PRINTLN(error.c_str());
             http.end();
             return false;
         } else {
@@ -270,8 +277,8 @@ bool regenTokenPair()
             const char* access_token = doc["access_token"];
             const char* refresh_token = doc["refresh_token"];
 
-            Serial.print("AT: "); Serial.println(access_token);
-            Serial.print("RT: "); Serial.println(refresh_token);
+            DBG_PRINT("AT: "); DBG_PRINTLN(access_token);
+            DBG_PRINT("RT: "); DBG_PRINTLN(refresh_token);
 
             // Store in NVS
             prefs.putString("ACCESS_TOKEN",access_token);
@@ -282,8 +289,8 @@ bool regenTokenPair()
 
     }
     else {
-        Serial.print("Error code: ");
-        Serial.println(httpResponseCode);
+        DBG_PRINT("Error code: ");
+        DBG_PRINTLN(httpResponseCode);
     }
 
     // Free resources
@@ -292,14 +299,14 @@ bool regenTokenPair()
 
 }
 
-const char refreshurl[] = "https://oauth2.googleapis.com/token";
+constexpr char refreshurl[] = "https://oauth2.googleapis.com/token";
 bool refreshToken()
 {
     //? If this is called, we have a valid refresh token in NVS.
-    Serial.println("Token refresh beginning.");
+    DBG_PRINTLN("Token refresh beginning.");
     if(!connect())
     {
-        Serial.println("WiFi connection failed - token refresh aborted.");
+        DBG_PRINTLN("WiFi connection failed - token refresh aborted.");
         return false;
     }
     // Send post for refresh
@@ -317,25 +324,24 @@ bool refreshToken()
     int httpResponseCode = http.POST(payload);
     printStackUsage("afta");
     if (httpResponseCode==200) {
-        Serial.print("HTTP Response code: ");
-        Serial.println(httpResponseCode);
+        DBG_PRINT("HTTP Response code: ");
+        DBG_PRINTLN(httpResponseCode);
         String response = http.getString();
         http.end();
-        Serial.println(response);
+        DBG_PRINTLN(response);
 
-        StaticJsonDocument<480> doc;
+        JsonDocument doc;
 
-        DeserializationError error = deserializeJson(doc, response);
-        if (error) {
-            Serial.print("deserializeJson() failed: ");
-            Serial.println(error.c_str());
+        if (DeserializationError error = deserializeJson(doc, response)) {
+            DBG_PRINT("deserializeJson() failed: ");
+            DBG_PRINTLN(error.c_str());
             http.end();
             return false;
         } else {
             // Extract values
             const char* access_token = doc["access_token"];
 
-            Serial.print("AT: "); Serial.println(access_token);
+            DBG_PRINT("AT: "); DBG_PRINTLN(access_token);
 
             // Store in NVS
             prefs.putString("ACCESS_TOKEN",access_token);
@@ -345,8 +351,8 @@ bool refreshToken()
 
     }
     else {
-        Serial.print("Error code: ");
-        Serial.println(httpResponseCode);
+        DBG_PRINT("Error code: ");
+        DBG_PRINTLN(httpResponseCode);
     }
 
     // Free resources
@@ -356,25 +362,29 @@ bool refreshToken()
 bool syncTime()
 {
     // Init and get the time
-    connect();
+    if (!connect())
+    {
+        DBG_PRINTLN("WiFi connection failed - time sync aborted.");
+        return false;
+    }
     configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
     setenv("TZ", "CET-1CEST,M3.5.0/2,M10.5.0/3", 1);
     tzset();
-    struct tm timeinfo;
+    tm timeinfo{};
     while(!getLocalTime(&timeinfo)){
-        Serial.println("Failed to obtain time");
+        DBG_PRINTLN("Failed to obtain time");
         return false;
     }
-    Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
+    DBG_PRINTLN(&timeinfo, "%A, %B %d %Y %H:%M:%S");
     return true;
 }
 
 #define INCLUDE_vTaskDelete 1
 void refreshTask(void *arg)
 {
-    TaskHandle_t creator = static_cast<TaskHandle_t>(arg);
+    auto creator = static_cast<TaskHandle_t>(arg);
     refreshToken();
-    Serial.println("Task finished");
+    DBG_PRINTLN("Task finished");
     xTaskNotifyGive(creator);
     vTaskDelete(nullptr);   // delete this task when done
 
@@ -388,18 +398,18 @@ String getAccessToken()
         return prefs.getString("ACCESS_TOKEN");
     }
     //? We don't. check if we have a refresh token in NVS.
-    Serial.println("Access token expired.");
+    DBG_PRINTLN("Access token expired.");
     if(prefs.isKey("REFRESH_TOKEN"))
     {
-        Serial.println("Renewing with refresh token...");
+        DBG_PRINTLN("Renewing with refresh token...");
         //? We do -> use it to generate a new access token.
         if(refreshToken()) return prefs.getString("ACCESS_TOKEN");
         //? Refresh failed!
-        Serial.println("Renewal failed! Regenerate token pair!");
+        DBG_PRINTLN("Renewal failed! Regenerate token pair!");
         return "";
     }
     //? No token to return
-    Serial.println("No access token stored! Regenerate token pair!");
+    DBG_PRINTLN("No access token stored! Regenerate token pair!");
     return "";
 }
 bool timeset = false;
@@ -410,7 +420,7 @@ tm getTime()
     time_t now;
     time(&now);
 
-    struct tm local_tm;
+    tm local_tm{};
     localtime_r(&now, &local_tm);
     return local_tm;
 }
@@ -428,14 +438,24 @@ struct Event
 {
     String summary = "Unknown summary";
     String description = "Unknown description";
-    tm startTime;
+    tm startTime ;
     tm endTime;
 };
 struct Date
 {
     int year;
-    int yday;
+    int month;
+    int day;
+    friend bool operator< (const Date& rhs, const Date& lhs)
+    {
+        if (lhs.year != rhs.year)
+        {
+            return lhs.year < rhs.year;
+        }
+        if (lhs.month!=rhs.month )return lhs.month < rhs.month;
+        return lhs.month < rhs.month;
 
+    }
 };
 
 enum Weather : byte
@@ -516,13 +536,13 @@ struct Forecast
     std::array<Weather,24> weather_code_hourly; // 96 bytes
     // ~202 bytes per day
     // ~1414 bytes per 7 day forecast
-    //(i ~~1.4kB?
+    // ~~1.4kB?
 };
 JsonDocument getCalendarEvents()
 {
-    Serial.println("Event retrieval beginning.");
+    DBG_PRINTLN("Event retrieval beginning.");
 
-    Serial.println("Current day:");
+    DBG_PRINTLN("Current day:");
     auto time = getTime();
 
     struct tm start_tm = time;
@@ -543,15 +563,15 @@ JsonDocument getCalendarEvents()
     strftime(start_buf, sizeof(start_buf),
              "%Y-%m-%dT%H:%M:%S%z", localtime(&start_t));
     fixTZ(start_buf);
-    Serial.println(start_buf);
+    DBG_PRINTLN(start_buf);
     strftime(end_buf, sizeof(end_buf),
              "%Y-%m-%dT%H:%M:%S%z", localtime(&end_t));
-    Serial.println("Tomorrow:");
+    DBG_PRINTLN("Tomorrow:");
     fixTZ(end_buf);
-    Serial.println(end_buf);
+    DBG_PRINTLN(end_buf);
     if(!connect())
     {
-        Serial.println("WiFi connection failed - event retrieval aborted.");
+        DBG_PRINTLN("WiFi connection failed - event retrieval aborted.");
         return JsonDocument();
     }
     // Send post for refresh
@@ -560,7 +580,7 @@ JsonDocument getCalendarEvents()
     payload = String(calendarurl) + listurl + "singleEvents=True&orderBy=startTime";
     payload += String("&timeMin=") + String(start_buf);
     payload += String("&timeMax=") + String(end_buf);
-    Serial.println(payload);
+    DBG_PRINTLN(payload);
     payload.replace("+","%2B");
     HTTPClient http;
     http.setReuse(false);
@@ -570,18 +590,17 @@ JsonDocument getCalendarEvents()
     http.addHeader("Content-Type", "application/x-www-form-urlencoded");
     int httpResponseCode = http.GET();
     if (httpResponseCode==200) {
-        Serial.print("HTTP Response code: ");
-        Serial.println(httpResponseCode);
+        DBG_PRINT("HTTP Response code: ");
+        DBG_PRINTLN(httpResponseCode);
         String response = http.getString();
         http.end();
-        Serial.println(response);
+        DBG_PRINTLN(response);
 
         JsonDocument doc;
 
-        DeserializationError error = deserializeJson(doc, response);
-        if (error) {
-            Serial.print("deserializeJson() failed: ");
-            Serial.println(error.c_str());
+        if (DeserializationError error = deserializeJson(doc, response)) {
+            DBG_PRINT("deserializeJson() failed: ");
+            DBG_PRINTLN(error.c_str());
             http.end();
             return JsonDocument();
         } else {
@@ -594,8 +613,8 @@ JsonDocument getCalendarEvents()
     }
     else {
         if (httpResponseCode==401) {if (refreshToken()) return getCalendarEvents();}
-        Serial.print("Error code: ");
-        Serial.println(httpResponseCode);
+        DBG_PRINT("Error code: ");
+        DBG_PRINTLN(httpResponseCode);
         return JsonDocument();
     }
 
@@ -605,10 +624,10 @@ std::vector<Forecast> forecasts;
 constexpr char forecasturl[] = "http://api.open-meteo.com/v1/forecast?latitude=50.33&longitude=18.9&daily=temperature_2m_max,weather_code,temperature_2m_min,precipitation_probability_max&hourly=temperature_2m,weather_code&timezone=auto";
 JsonDocument getForecast()
 {
-    Serial.println("Forecast retrieval beginning.");
+    DBG_PRINTLN("Forecast retrieval beginning.");
     if(!connect())
     {
-        Serial.println("WiFi connection failed - forecast retrieval aborted.");
+        DBG_PRINTLN("WiFi connection failed - forecast retrieval aborted.");
         return JsonDocument();
     }
     // Send post for refresh
@@ -620,18 +639,17 @@ JsonDocument getForecast()
     http.begin(payload);
     int httpResponseCode = http.GET();
     if (httpResponseCode==200) {
-        Serial.print("HTTP Response code: ");
-        Serial.println(httpResponseCode);
+        DBG_PRINT("HTTP Response code: ");
+        DBG_PRINTLN(httpResponseCode);
         String response = http.getString();
         http.end();
-        Serial.println(response);
+        DBG_PRINTLN(response);
 
         JsonDocument doc;
 
-        DeserializationError error = deserializeJson(doc, response);
-        if (error) {
-            Serial.print("deserializeJson() failed: ");
-            Serial.println(error.c_str());
+        if (DeserializationError error = deserializeJson(doc, response)) {
+            DBG_PRINT("deserializeJson() failed: ");
+            DBG_PRINTLN(error.c_str());
             http.end();
             return JsonDocument();
         } else {
@@ -642,8 +660,8 @@ JsonDocument getForecast()
 
     }
     else {
-        Serial.print("Error code: ");
-        Serial.println(httpResponseCode);
+        DBG_PRINT("Error code: ");
+        DBG_PRINTLN(httpResponseCode);
         return JsonDocument();
     }
 }
@@ -658,8 +676,8 @@ void loadForecast()
     auto temperature_daily_max = doc["daily"]["temperature_2m_max"].as<JsonArray>();
     auto temperature_hourly_temp = doc["hourly"]["temperature_2m"].as<JsonArray>();
     auto weather_code_hourly_temp =  doc["hourly"]["weather_code"].as<JsonArray>();
-    std::array<std::array<float,24>,7> temperature_hourly;
-    std::array<std::array<Weather,24>,7> weather_code_hourly;
+    std::array<std::array<float,24>,7> temperature_hourly{};
+    std::array<std::array<Weather,24>,7> weather_code_hourly{};
     for(int i = 0; i < FORECAST_DAYS; i ++)
     {
 
@@ -718,7 +736,7 @@ tm rfc3339ToTm(const char *rfc3339)
 std::vector<Event> events;
 void loadEvents(JsonDocument doc)
 {
-    Serial.println("Loading events...");
+    DBG_PRINTLN("Loading events...");
     for (JsonVariant item : doc.as<JsonArray>())
     {
         Event event;
@@ -750,9 +768,9 @@ void setup(void *arg) {
     gpio_set_direction(GPIO_NUM_40,GPIO_MODE_INPUT); //drain cap
     gpio_pulldown_en(GPIO_NUM_40);
     Serial.begin(115200);
-    Serial.println("Woken up!");
-    Serial.print("Pin 40 (WAKEREASON): ");
-    Serial.println(is_manual);
+    DBG_PRINTLN("Woken up!");
+    DBG_PRINT("Pin 40 (WAKEREASON): ");
+    DBG_PRINTLN(is_manual);
     printStackUsage("beginning of setup");
     prefs.begin("main",false);
     // BRANCH: WAKEREASON
@@ -778,17 +796,17 @@ void setup(void *arg) {
     loadEvents(getCalendarEvents());
     for (auto event : events)
     {
-        Serial.println(event.summary);
-        Serial.println(event.description);
-        Serial.println(&event.startTime, "%A, %B %d %Y %H:%M:%S");
-        Serial.println(&event.endTime, "%A, %B %d %Y %H:%M:%S");
-        Serial.println();
+        DBG_PRINTLN(event.summary);
+        DBG_PRINTLN(event.description);
+        DBG_PRINTLN(&event.startTime, "%A, %B %d %Y %H:%M:%S");
+        DBG_PRINTLN(&event.endTime, "%A, %B %d %Y %H:%M:%S");
+        DBG_PRINTLN();
     }
     // Send HTTP GET request
     loadForecast();
-    for (auto forecast : forecasts)
+    for (auto &forecast : forecasts)
     {
-        Serial.println(forecast.weather_code_daily);
+        DBG_PRINTLN(forecast.weather_code_daily);
     }
 
     //We now have fresh forecast data and fresh event data - merge it on a per date basis
@@ -796,26 +814,50 @@ void setup(void *arg) {
     std::multimap<Date, Forecast> forecast_map;
     for(auto &event : events)
     {
-       event_map[{event.startTime.year,event.startTime.yday}] = event;
+
+       event_map.insert(std::make_pair(Date(event.startTime.tm_year,event.startTime.tm_mon,event.startTime.tm_mday),event));
     }
     auto n = getTime();
-    Date now = {
-            .year = n.year,
-            .yday = n.yday
-    };
+
     //! fix to handle new year case
-    for(size_t idx = 0; auto forecast : forecasts)
+    int idx = 0;
+    for(auto forecast : forecasts)
     {
-        forecast_map[Date(now.year, now.yday+idx)] = forecast;
+        idx++;
+        tm copy = n;
+        tm* t = &copy;
+        copy.tm_mday+=idx;
+        auto time_t_now = mktime(&copy);
+        t = localtime(&time_t_now);
+
+        forecast_map.insert(std::make_pair(Date(t->tm_year,t->tm_mon,t->tm_mday),forecast));
     }
 
-    for(auto x: event_map)
+    for(auto &x: event_map)
     {
-        Serial.println(x);
+        DBG_PRINTLN();
+        DBG_PRINTLN(x.first.year+1900);
+        DBG_PRINTLN(x.first.month);
+
+        DBG_PRINTLN(x.first.day);
+
+        DBG_PRINTLN(x.second.summary);
+        DBG_PRINTLN(x.second.description);
+        DBG_PRINTLN(x.second.startTime.tm_hour);
+        DBG_PRINTLN(x.second.endTime.tm_hour);
+
     }
-    for(auto x: forecast_map)
+    for(auto &x: forecast_map)
     {
-        Serial.println(x);
+        DBG_PRINTLN();
+        DBG_PRINTLN(x.first.year+1900);
+        DBG_PRINTLN(x.first.month+1);
+
+        DBG_PRINTLN(x.first.day);
+
+        DBG_PRINTLN(x.second.temperature_daily_max);
+        DBG_PRINTLN(x.second.temperature_daily_min);
+        DBG_PRINTLN(x.second.weather_code_daily);
     }
     //disconnect WiFi as it's no longer needed
     WiFi.disconnect(true);
@@ -823,61 +865,58 @@ void setup(void *arg) {
 
 
     end();
-    TaskHandle_t creator = static_cast<TaskHandle_t>(arg);
+    auto creator = static_cast<TaskHandle_t>(arg);
 
     xTaskNotifyGive(creator);
-    vTaskDelete(nullptr);   // delete this task when done
-
-    return;
-}
+    vTaskDelete(nullptr);   }
 void test()
 {
 
     // Init and get the time
     setenv("TZ", "CET-1CEST,M3.5.0/2,M10.5.0/3", 1);
     configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-    struct tm timeinfo;
+    tm timeinfo;
     while(!getLocalTime(&timeinfo)){
-        Serial.println("Failed to obtain time");
+        DBG_PRINTLN("Failed to obtain time");
         delay(100);
     }
-    Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
+    DBG_PRINTLN(&timeinfo, "%A, %B %d %Y %H:%M:%S");
 
     pinMode(35,OUTPUT);
     pinMode(16,OUTPUT);
     pinMode(17,OUTPUT);
 
-    Serial.println("Adafruit SHT4x test");
+    DBG_PRINTLN("Adafruit SHT4x test");
     if (! sht4.begin()) {
-        Serial.println("Couldn't find SHT4x");
+        DBG_PRINTLN("Couldn't find SHT4x");
 
     }
-    Serial.println("Found SHT4x sensor");
-    Serial.print("Serial number 0x");
-    Serial.println(sht4.readSerial(), HEX);
+    DBG_PRINTLN("Found SHT4x sensor");
+    DBG_PRINT("Serial number 0x");
+    DBG_PRINTLN(sht4.readSerial(), HEX);
 
     // You can have 3 different precisions, higher precision takes longer
     sht4.setPrecision(SHT4X_HIGH_PRECISION);
 
     sensors_event_t humidity, temp;
 
-    uint32_t timestamp = millis();
+    //uint32_t timestamp = millis();
     sht4.getEvent(&humidity, &temp);// populate temp and humidity objects with fresh data
-    timestamp = millis() - timestamp;
-    Serial.print("Temperature: "); Serial.print(temp.temperature); Serial.println(" degrees C");
-    Serial.print("Humidity: "); Serial.print(humidity.relative_humidity); Serial.println("% rH");
+    //timestamp = millis() - timestamp;
+    DBG_PRINT("Temperature: "); DBG_PRINT(temp.temperature); DBG_PRINTLN(" degrees C");
+    DBG_PRINT("Humidity: "); DBG_PRINT(humidity.relative_humidity); DBG_PRINTLN("% rH");
 
-    Serial.print("Read duration (ms): ");
-    Serial.println(timestamp);
+    DBG_PRINT("Read duration (ms): ");
+    DBG_PRINTLN(timestamp);
 
     if (!fram.begin())
     {
-        Serial.print("FRAM NOT FOUND!!!!!!!!");
+        DBG_PRINT("FRAM NOT FOUND!!!!!!!!");
 
     }
 
     fram.exitSleep();
-    fram.writeEnable(1);
+    fram.writeEnable(true);
     uint32_t addr = 12;
     uint8_t valtowrite = 12;
     fram.write8(addr,valtowrite);
@@ -914,7 +953,7 @@ void test()
 }
 void loop(void *arg) {
 
-    TaskHandle_t creator = static_cast<TaskHandle_t>(arg);
+    auto creator = static_cast<TaskHandle_t>(arg);
     xTaskNotifyGive(creator);
     vTaskDelete(nullptr);   // delete this task when done
 }

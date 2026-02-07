@@ -433,8 +433,89 @@ struct Event
 };
 struct Date
 {
-    int yday;
-    std::vector<Event> events;
+    int year;
+    int yday
+};
+
+enum Weather : byte
+{
+    UNKNOWN = 0,
+    CLEAR_SKIES,
+    CLOUDY,
+    OVERCAST,
+    FOGGY,
+    DRIZZLE,
+    RAINY,
+    SNOWY,
+    STORMY
+};
+
+inline Weather toWeather(byte weather_code)
+    {
+        switch(weather_code)
+        {
+            case 0:
+                return CLEAR_SKIES;
+            case 1:
+            case 2:
+                return CLOUDY;
+            case 3:
+                return OVERCAST;
+            case 45:
+            case 48:
+                return FOGGY;
+            case 51:
+            case 53:
+            case 55:
+            case 56:
+            case 57:
+                return DRIZZLE;
+            case 61:
+            case 63:
+            case 65:
+            case 66:
+            case 67:
+            case 80:
+            case 81:
+            case 82:
+                return RAINY;
+            case 71:
+            case 73:
+            case 75:
+            case 77:
+            case 85:
+            case 86:
+                return SNOWY;
+            case 95:
+            case 96:
+            case 99:
+                return STORMY;
+            default:
+                return UNKNOWN;
+
+        }
+    }
+
+//per day
+constexpr short FORECAST_DAYS = 7;
+struct Forecast
+{
+    //(i) Hourly & Daily values are stored
+    //(i) Daily max and min temp
+    float temperature_daily_max; //4 bytes
+    float temperature_daily_min; //4 bytes
+   // //(i) Daily humidity
+   // //byte humidity_daily; //byte
+    //(i) Daily weather code
+    Weather weather_code_daily; //byte
+
+    //(i)Hourly temp
+    float temperature_hourly[24]; // 4 bytes * 24 = 96 bytes
+    //(i)Hourly weather code
+    Weather weather_code_hourly[24]; // 96 bytes
+    // ~202 bytes per day
+    // ~1414 bytes per 7 day forecast
+    //(i ~~1.4kB?
 };
 JsonDocument getCalendarEvents()
 {
@@ -517,13 +598,89 @@ JsonDocument getCalendarEvents()
         return JsonDocument();
     }
 
-    // Free resources
-    http.end();
-    return JsonDocument();
-    //return false;
 
 }
+std::vector<Forecast> forecasts;
+void loadForecast()
+{
+    //1 Get all weather data (1-week for now)
+    auto doc = getForecast();
+    //2 seperate into arrays
 
+    auto weather_code_daily[FORECAST_DAYS] = doc["daily"]["weather_code"].as<JsonArray>();
+    auto temperature_daily_min[FORECAST_DAYS] = doc["daily"]["temperature_2m_min"].as<JsonArray>();
+    auto temperature_daily_max[FORECAST_DAYS] = doc["daily"]["temperature_2m_max"].as<JsonArray>(),
+    auto temperature_hourly_temp[FORECAST_DAYS*24] = doc["hourly"]["temperature_2m"].as<JsonArray>();
+    auto weather_code_hourly_temp[FORECAST_DAYS*24] =  doc["hourly"]["weather_code"].as<JsonArray>();
+    float temperature_hourly[FORECAST_DAYS][24];
+    byte weather_code_hourly[FORECAST_DAYS][24];
+    for(int i = 0; i < FORECAST_DAYS; i ++)
+    {
+
+        for(int j = 0; j < 24 ; j++)
+        {
+            temperature_hourly[i][j] = temperature_hourly_temp[i*24+j];
+            weather_code_hourly[i][j] = weather_code_hourly_temp[i*24+j];
+        }
+
+    }
+    // For all days...
+    for (int i = 0 ; i < FORECAST_DAYS; i ++) {
+        Forecast f = {
+                .weather_code_daily = toWeather(weather_code_daily[i]),
+                .temperature_daily_min = temperature_daily_min[i],
+                .temperature_daily_max = temperature_daily_max[i],
+                .temperature_hourly = temperature_hourly[i],
+                .weather_code_hourly = weather_code_hourly[i]
+        };
+        forecasts.push_back(f);
+    }
+}
+constexpr char forecasturl[] = "http://api.open-meteo.com/v1/forecast?latitude=50.33&longitude=18.9&daily=temperature_2m_max,weather_code,temperature_2m_min,precipitation_probability_max&hourly=temperature_2m,weather_code&timezone=auto"
+JsonDocument getForecast()
+{
+    Serial.println("Forecast retrieval beginning.");
+    if(!connect())
+    {
+        Serial.println("WiFi connection failed - forecast retrieval aborted.");
+        return JsonDocument();
+    }
+    // Send post for refresh
+    String payload;
+    payload.reserve(256);
+    payload = String(forecasturl)
+    HTTPClient http;
+    http.setReuse(false);
+    http.begin(payload);
+    int httpResponseCode = http.GET();
+    if (httpResponseCode==200) {
+        Serial.print("HTTP Response code: ");
+        Serial.println(httpResponseCode);
+        String response = http.getString();
+        http.end();
+        Serial.println(response);
+
+        JsonDocument doc;
+
+        DeserializationError error = deserializeJson(doc, response);
+        if (error) {
+            Serial.print("deserializeJson() failed: ");
+            Serial.println(error.c_str());
+            http.end();
+            return JsonDocument();
+        } else {
+            // Extract values
+            http.end();
+            return doc;
+        }
+
+    }
+    else {
+        Serial.print("Error code: ");
+        Serial.println(httpResponseCode);
+        return JsonDocument();
+    }
+}
 tm rfc3339ToTm(const char *rfc3339)
 {
     struct tm tm = {};
@@ -625,7 +782,11 @@ void setup(void *arg) {
         Serial.println();
     }
     // Send HTTP GET request
-
+    loadForecast();
+    for (auto forecast : forecasts)
+    {
+        Serial.println(forecast.weather_code_daily);
+    }
 
     //disconnect WiFi as it's no longer needed
     WiFi.disconnect(true);

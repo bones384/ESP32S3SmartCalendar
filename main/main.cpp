@@ -25,7 +25,7 @@ String ssid = "foxnet253";
 #define RST_PIN   16
 #define BUSY_PIN  4
 
-#define DEBUG_SERIAL 0
+#define DEBUG_SERIAL 1
 #if DEBUG_SERIAL
 #define DBG_PRINT(...) Serial.print(__VA_ARGS__)
 #define DBG_PRINTLN(...) Serial.println(__VA_ARGS__)
@@ -353,6 +353,7 @@ bool refreshToken()
     else {
         DBG_PRINT("Error code: ");
         DBG_PRINTLN(httpResponseCode);
+        DBG_PRINTLN(http.getString());
     }
 
     // Free resources
@@ -777,6 +778,7 @@ void setup(void *arg) {
     if(is_manual) manual();
     else automatic();
 
+
     //TEST SPACE!
     pinMode(BTN_UP,    INPUT_PULLUP);
     pinMode(BTN_DOWN,  INPUT_PULLUP);
@@ -811,7 +813,7 @@ void setup(void *arg) {
 
     //We now have fresh forecast data and fresh event data - merge it on a per date basis
     std::multimap<Date, Event> event_map;
-    std::multimap<Date, Forecast> forecast_map;
+    std::map<Date, Forecast> forecast_map;
     for(auto &event : events)
     {
 
@@ -823,42 +825,58 @@ void setup(void *arg) {
     int idx = 0;
     for(auto forecast : forecasts)
     {
-        idx++;
         tm copy = n;
         tm* t = &copy;
         copy.tm_mday+=idx;
         auto time_t_now = mktime(&copy);
         t = localtime(&time_t_now);
+        idx++;
 
         forecast_map.insert(std::make_pair(Date(t->tm_year,t->tm_mon,t->tm_mday),forecast));
+
+
     }
 
-    for(auto &x: event_map)
+    for(int i = 0; i < 14; i++)
     {
-        DBG_PRINTLN();
-        DBG_PRINTLN(x.first.year+1900);
-        DBG_PRINTLN(x.first.month);
+        tm copy = n;
+        tm* t = &copy;
+        copy.tm_mday+=i;
+        auto time_t_now = mktime(&copy);
+        t = localtime(&time_t_now);
+        Date d = {t->tm_year,t->tm_mon,t->tm_mday};
 
-        DBG_PRINTLN(x.first.day);
+        DBG_PRINT(t->tm_year+1900), DBG_PRINT(" "),DBG_PRINT(t->tm_mon+1),DBG_PRINT(" "), DBG_PRINTLN(t->tm_mday);
+        if (forecast_map.contains(d))
+        {
+            Forecast *f = &forecast_map.at(d);
+            DBG_PRINTLN("Forecast:");
+            DBG_PRINTLN(f->weather_code_daily);
+            DBG_PRINTLN();
+        }
+        if (event_map.contains(d))
+        {
+            auto [fst, snd] = event_map.equal_range(d);
+            for (auto it = fst; it != snd; ++it)
+            {
+                DBG_PRINTLN("Event:");
+                DBG_PRINTLN(it->second.summary);
+                DBG_PRINTLN(it->second.description);
+                DBG_PRINTLN(it->second.startTime.tm_hour);
+                DBG_PRINTLN(it->second.startTime.tm_min);
+                DBG_PRINTLN(it->second.startTime.tm_sec);
 
-        DBG_PRINTLN(x.second.summary);
-        DBG_PRINTLN(x.second.description);
-        DBG_PRINTLN(x.second.startTime.tm_hour);
-        DBG_PRINTLN(x.second.endTime.tm_hour);
+                DBG_PRINTLN(it->second.endTime.tm_hour);
+                DBG_PRINTLN(it->second.endTime.tm_min);
+                DBG_PRINTLN(it->second.endTime.tm_sec);
+                DBG_PRINTLN();
+
+            }
+
+        }
 
     }
-    for(auto &x: forecast_map)
-    {
-        DBG_PRINTLN();
-        DBG_PRINTLN(x.first.year+1900);
-        DBG_PRINTLN(x.first.month+1);
 
-        DBG_PRINTLN(x.first.day);
-
-        DBG_PRINTLN(x.second.temperature_daily_max);
-        DBG_PRINTLN(x.second.temperature_daily_min);
-        DBG_PRINTLN(x.second.weather_code_daily);
-    }
     //disconnect WiFi as it's no longer needed
     WiFi.disconnect(true);
     WiFi.mode(WIFI_OFF);
@@ -907,7 +925,6 @@ void test()
     DBG_PRINT("Humidity: "); DBG_PRINT(humidity.relative_humidity); DBG_PRINTLN("% rH");
 
     DBG_PRINT("Read duration (ms): ");
-    DBG_PRINTLN(timestamp);
 
     if (!fram.begin())
     {

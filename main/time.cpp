@@ -31,7 +31,7 @@ bool syncTime()
 bool timeset = false;
 tm getTime()
 {
-    if (!timeset) syncTime();
+    if (!timeset) timeset = syncTime();
 
     time_t now;
     time(&now);

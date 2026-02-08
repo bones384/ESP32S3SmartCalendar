@@ -101,11 +101,72 @@ Preferences prefs;
 void manual()
 {
     DBG_PRINTLN("Manual!");
+
+    //Fetch fresh data
+    networkSync();
+    // User mode....
+
+
+    //...
+
+    //User interactive mode ending - do a final update to everything before shutdown
+    networkSync();
+    saveToCache();
+    prefs.putUShort("bootsLeft",prefs.getUShort("bootsTillSync"));
+    end();
 }
 
 void automatic()
 {
     DBG_PRINTLN("Auto!");
+
+    //Check if need to sync
+    auto boots_left = prefs.getUShort("bootsLeft");
+    if(boots_left==0)
+    {
+        //If yes: fetch new content overriding the cache and reset boot counter
+        networkSync();
+        saveToCache();
+
+        prefs.getBytes("lastTime", &t, sizeof(t));
+
+
+        prefs.putUShort("bootsLeft",prefs.getUShort("bootsTillSync"));
+
+    }
+    else
+    {
+        //If not: Load and display cached data, decrement boot counter
+        // "approx. now time"
+        time_t t;
+        prefs.getBytes("lastTime", &t, sizeof(t));
+        //Boots ~1 min apart
+
+        int boot_count = prefs.getUShort("bootsTillSync")-boots_left;
+
+        t+= boot_count * 60;
+
+        tm local = localtime(&t);
+
+        loadFromCache();
+
+        auto now = getTime();
+        auto now_t = std::mktime(&now)
+        prefs.putBytes("lastTime", &now_t, sizeof(now_t));
+
+    }
+    // Print
+    Serial.print("Automatic boot - boots till sync #:");
+    Serial.println(boots_left);
+    Serial.print("Current time: ");
+    Serial.print(tm.hour);
+    Serial.print(":");
+    Serial.print(tm.min);
+    Serial.print(":");
+    Serial.print(tm.sec);
+    //Turn everything off
+    end();
+
 }
 void end()
 {
@@ -129,6 +190,25 @@ void setup(void *arg) {
     DBG_PRINT("Pin 40 (WAKEREASON): ");
     DBG_PRINTLN(is_manual);
     prefs.begin("main",false);
+
+    fram.begin();
+
+    if(!prefs.isKey("bootsTillSync"))
+    {
+        prefs.putUShort("bootsTillSync", 5);
+    }
+    if(!prefs.isKey("bootsLeft"))
+    {
+        prefs.putUShort("bootsLeft", 0);
+    }
+    if(!prefs.isKey("lastTime"))
+    {
+        auto now = getTime();
+        auto now_t = std::mktime(&now)
+        prefs.putBytes("lastTime", &now_t, sizeof(now_t));
+
+    }
+
     // BRANCH: WAKEREASON
     if(is_manual) manual();
     else automatic();

@@ -20,6 +20,7 @@ bool connect()
             if (retries == 0) {
                 DBG_PRINTLN("");
                 DBG_PRINT("!!!WiFi connection failed after "); DBG_PRINT(wifi_retries); DBG_PRINTLN(" tries.");
+                WiFi.mode(WIFI_OFF);
                 return false;
             }
         }

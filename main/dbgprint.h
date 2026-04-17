@@ -4,7 +4,7 @@
 
 #pragma once
 #include <Arduino.h>
-#define DEBUG_SERIAL 1
+#define DEBUG_SERIAL 0
 #if DEBUG_SERIAL
 #define DBG_PRINT(...) Serial.print(__VA_ARGS__)
 #define DBG_PRINTLN(...) Serial.println(__VA_ARGS__)

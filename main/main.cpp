@@ -9,12 +9,11 @@
 #include <nvs.h>
 #include <bitset>
 #include "adc.hpp"
+#include <WiFiProv.h>
 #include "defines.h"
 #include <cstdint>
 #include <driver/rtc_io.h>
 #include <misc/lv_color.h>
-String password = "Mumia!25";
-String ssid = "foxnet253";
 #include <HTTPClient.h>
 #include <GxEPD2_3C.h>
 #include <SPI.h>
@@ -34,267 +33,6 @@ String ssid = "foxnet253";
 #include "tokens.hpp"
 #include "connect.hpp"
 GxEPD2_BW<GxEPD2_420_GDEY042T81, GxEPD2_420_GDEY042T81::HEIGHT> display(GxEPD2_420_GDEY042T81(CS_PIN, DC_PIN, RST_PIN, BUSY_PIN));
-
-lv_style_t style;
-lv_style_t weatherstyle;
-
-
-LV_FONT_DECLARE(myfont);
-LV_FONT_DECLARE(weather);
-
-static bool btn_pressed(int gpio)
-{
-    return gpio_get_level((gpio_num_t)gpio) == 0;
-}
-
-
- constexpr uint16_t DISP_W = 400;
- constexpr uint16_t DISP_H = 300;
-
- uint8_t fb[((DISP_W * DISP_H)/8)+16];
-
- lv_display_t* disp;
- lv_obj_t* label;
-#define LV_FONT_UNSCII_16 1
-
-static void epd_flush(lv_display_t* disp,
-                      const lv_area_t* area,
-                      uint8_t* px_map)
-{
-    display.setFullWindow();
-
-   // delay(500);
-    //return;
-    uint8_t px_map_cpy [((DISP_H * DISP_W)/8)+16];
-    for (size_t i = 8; i < ((DISP_H * DISP_W)/8)+16; i++)
-        px_map_cpy[i] = ~px_map[i];
-    uint8_t *ptr = px_map_cpy;
-    ptr+=8;
-    display.firstPage();
-    do {
-        // GxEPD expects 1 = black, LVGL uses 1 = white
-        display.drawBitmap(
-           0,
-           0,
-            ptr,
-            400,
-            300,
-            GxEPD_BLACK
-        );
-    } while (display.nextPage());
-
-    lv_display_flush_ready(disp);
-}
-static lv_indev_t* keypad_indev;
-static uint32_t last_key = 0;
-
-static void keypad_read_cb(lv_indev_t* indev, lv_indev_data_t* data)
-{
-    data->state = LV_INDEV_STATE_RELEASED;
-    data->key   = last_key;
-
-    if (btn_pressed(BTN_UP)) {
-        last_key = LV_KEY_UP;
-    }
-    else if (btn_pressed(BTN_DOWN)) {
-        last_key = LV_KEY_PREV;
-    }
-    else if (btn_pressed(BTN_LEFT)) {
-        last_key = LV_KEY_NEXT;
-    }
-    else if (btn_pressed(BTN_RIGHT)) {
-        last_key = LV_KEY_RIGHT;
-    }
-    else if (btn_pressed(BTN_ENTER)) {
-        last_key = LV_KEY_ENTER;
-    }
-    else
-    {
-        return;
-    }
-    data->state=LV_INDEV_STATE_PRESSED;
-    data->key=last_key;
-}
-
-void lv_port_indev_init(void)
-{
-
-    keypad_indev = lv_indev_create();
-    if (keypad_indev==nullptr) Serial.println("KEYPADNULL!!!!");
-    lv_indev_set_type(keypad_indev, LV_INDEV_TYPE_KEYPAD);
-    lv_indev_set_read_cb(keypad_indev, keypad_read_cb);
-}
-lv_group_t* group;
-void lv_focus_init(void)
-{
-    group = lv_group_create();
-    lv_group_set_default(group);
-    lv_group_set_editing(group,false);
-    lv_indev_set_group(keypad_indev, group);
-}
-
-static void style_focus_init(void)
-{
-    static lv_style_t style_focus;
-    lv_style_init(&style_focus);
-    lv_style_set_outline_width(&style_focus, 2);
-    lv_style_set_outline_pad(&style_focus, 2);
-    lv_style_set_outline_color(&style_focus, lv_color_black());
-
-    lv_obj_add_style(lv_scr_act(), &style_focus, LV_STATE_FOCUSED);
-}
-
-void lv_port_disp_init()
-{
-    lv_init();
-
-    lv_style_init(&style);
-    lv_style_set_text_font(&style, &myfont);
-    lv_style_init(&weatherstyle);
-
-
-    lv_style_set_text_font(&weatherstyle, &weather);
-    disp = lv_display_create(DISP_W, DISP_H);
-
-    lv_display_set_color_format(disp, LV_COLOR_FORMAT_I1);
-    lv_display_set_buffers(
-        disp,
-        fb,
-        nullptr,
-        sizeof(fb),
-        LV_DISPLAY_RENDER_MODE_DIRECT
-    );
-    lv_display_set_flush_cb(disp, epd_flush);
-
-    lv_port_indev_init();
-    lv_focus_init();
-
-}
-
-static lv_style_t style_btn;
-static lv_style_t style_btn_focused;
-
-static void init_styles(void)
-{
-    /* ---------- Normal button ---------- */
-    lv_style_init(&style_btn);
-    lv_style_set_bg_color(&style_btn, lv_color_white());
-    lv_style_set_bg_opa(&style_btn, LV_OPA_COVER);
-    lv_style_set_text_color(&style_btn, lv_color_black());
-    lv_style_set_border_width(&style_btn, 1);
-    lv_style_set_border_color(&style_btn, lv_color_black());
-    lv_style_set_radius(&style_btn, 2);
-
-    /* ---------- Focused button ---------- */
-    lv_style_init(&style_btn_focused);
-    lv_style_set_bg_color(&style_btn_focused, lv_color_black());
-    lv_style_set_bg_opa(&style_btn_focused, LV_OPA_COVER);
-    lv_style_set_text_color(&style_btn_focused, lv_color_white());
-    lv_style_set_border_width(&style_btn_focused, 1);
-    lv_style_set_border_color(&style_btn_focused, lv_color_black());
-}
-
-#define ICON_UNKNOWN       "\xEE\xA9\xB6"
-#define ICON_CLEAR_SKIES   "\xEE\xA6\xBA"
-#define ICON_CLOUDY        "\xEE\xA5\xA4"
-#define ICON_OVERCAST      "\xEE\xA5\xA6"
-#define ICON_FOGGY         "\xEE\xA6\xAE"
-#define ICON_DRIZZLE       "\xEE\xA4\xAA"
-#define ICON_RAINY         "\xEE\xA6\xB1"
-#define ICON_SNOWY         "\xEE\xA5\xBB"
-#define ICON_STORMY        "\xEE\xA8\x92"
-
-const char* icons[9] = {ICON_UNKNOWN,ICON_CLEAR_SKIES, ICON_CLOUDY, ICON_OVERCAST,
-                ICON_FOGGY, ICON_DRIZZLE, ICON_RAINY,
-                ICON_SNOWY, ICON_STORMY};
-
-static void create_ui(void)
-{
-    init_styles();
-    /* Root screen */
-    lv_obj_t* scr = lv_screen_active();
-    lv_obj_set_style_pad_all(scr, 0, 0);
-
-    /* ---------------- Header ---------------- */
-
-    lv_obj_t* header = lv_obj_create(scr);
-    lv_obj_set_width(header, LV_PCT(100));
-    lv_obj_set_height(header, LV_PCT(10));
-    lv_obj_align(header, LV_ALIGN_TOP_MID, 0, 0);
-
-    lv_obj_set_style_pad_all(header, 4, 0);
-
-    lv_obj_t* header_label = lv_label_create(header);
-    lv_label_set_text(header_label, "Sample Header Text");
-    lv_obj_set_style_text_font(header_label, &myfont, 0);
-    lv_obj_center(header_label);
-
-    /* ---------------- Body ---------------- */
-
-    lv_obj_t* body = lv_obj_create(scr);
-    lv_obj_set_width(body, LV_PCT(100));
-    lv_obj_set_height(body, LV_PCT(90));
-    lv_obj_align(body, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_t* btn;
-    /* Padding from screen edges */
-    lv_obj_set_style_pad_all(body, 6, 0);
-
-    /* ---------------- Grid container ---------------- */
-
-    lv_obj_t* grid = lv_obj_create(body);
-
-    /* Grid takes 80% of body in both dimensions */
-    lv_obj_set_size(grid, LV_PCT(80), LV_PCT(80));
-    lv_obj_center(grid);
-
-    /* Internal spacing */
-    lv_obj_set_style_pad_all(grid, 4, 0);
-    lv_obj_set_style_pad_row(grid, 4, 0);
-    lv_obj_set_style_pad_column(grid, 4, 0);
-
-    /* Define 3x3 grid (all equal, percentage-based) */
-    static int32_t col_dsc[] = {
-            LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST
-    };
-    static int32_t row_dsc[] = {
-            LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST
-    };
-
-    lv_obj_set_layout(grid, LV_LAYOUT_GRID);
-    lv_obj_set_grid_dsc_array(grid, col_dsc, row_dsc);
-    /* ---------------- Buttons ---------------- */
-
-    for (int r = 0; r < 3; r++) {
-        for (int c = 0; c < 3; c++) {
-            btn = lv_button_create(grid);
-            lv_obj_set_grid_cell(
-                    btn,
-                    LV_GRID_ALIGN_STRETCH, c, 1,
-                    LV_GRID_ALIGN_STRETCH, r, 1
-            );
-            /* Base style */
-            lv_obj_add_style(btn, &style_btn, 0);
-            lv_group_add_obj(group,btn);
-            /* Focused style */
-            lv_obj_add_style(btn, &style_btn_focused, LV_STATE_FOCUSED);
-                lv_obj_t* lbl = lv_label_create(btn);
-            lv_obj_set_style_text_font(lbl, &weather, 0);
-            lv_label_set_text(lbl,icons[r*3+c]);
-            lv_obj_center(lbl);
-        }
-    }
-
-}
-
-
-
-#define LV_COLOR_DEPTH              1
-#define LV_MEM_SIZE                 (128 * 1024)
-#define LV_DISP_DEF_REFR_PERIOD     500
-#define LV_USE_ANIMATION            0
-#define LV_USE_GPU                  0
-#define LV_USE_SHADOW               0
-#define LV_USE_GRADIENT             0
 
 int is_manual;
 void loop(void* arg);
@@ -349,20 +87,638 @@ void end();
 Preferences prefs;
 
 //Manual or first poweron of battery pack
+
+void end()
+{
+    display.hibernate();
+    prefs.end();
+    DBG_PRINTLN("Buhbye!");
+    gpio_set_level(GPIO_NUM_41,1); //DONE
+    gpio_set_level(GPIO_NUM_21,1); //stop hold
+    while(true) delay(500);
+}
+
+float vbat = 0.00f;
+float humidity = 0.0f;
+float temperature = 0.0f;
+std::multimap<Date, Event> event_map;
+std::map<Date, Forecast> forecast_map;
+
+int selected = 1;           // 0 = header, 1 = body (body default now)
+int header_section = 0;      // 0 = H2, 1 = H3
+int partial_count = 0;
+const int PARTIAL_LIMIT = 30;
+
+bool btn_pressed(int gpio) {
+    return digitalRead(gpio) == LOW;
+}
+tm dateToTm(const Date &d) {
+    tm t = {};
+    t.tm_year = d.year;
+    t.tm_mon  = d.month;
+    t.tm_mday = d.day;
+    return t;
+}
+bool viewingEvents = false;
+int eventIndex = 0;
+
+void drawHeader(bool invert, int highlight_section = -1, tm now = getTime()) {
+    int headerH = display.height() * 16 / 100; // now 16% of display height
+
+    uint16_t fg = GxEPD_WHITE;
+    uint16_t bg = GxEPD_BLACK;
+
+    // Dynamic content
+    char timeStr[6]; // HH:MM
+    snprintf(timeStr, sizeof(timeStr), "%02d:%02d", now.tm_hour, now.tm_min);
+
+    char envStr[20]; // temperature + humidity
+    snprintf(envStr, sizeof(envStr), "%.1f""C %.0f%%RH", temperature, humidity);
+
+    String h2Str;
+    String h3Str;
+    if(selected == 0) { // header selected -> show alternate text
+        h2Str = "PROVISIONING";
+        h3Str = "OATH RFSH";
+    } else { // normal display
+        if(WiFi.status() == WL_CONNECTED) h2Str = WiFi.SSID();
+        else h2Str = "Offline";
+        char vbatStr[12];
+        snprintf(vbatStr, sizeof(vbatStr), "VBAT: %.2fV", vbat);
+        h3Str = String(vbatStr);
+    }
+
+    // Widths
+    int charW = 6 * 2;  // textSize=2
+    int h1W = 5 * charW + charW;       // HH:MM
+    int h3W = h3Str.length() * charW + charW;
+    int totalW = display.width();
+    int h2W = totalW - h1W - h3W;
+
+    display.setPartialWindow(0, 0, totalW, headerH);
+    display.firstPage();
+    do {
+        // H1: time (top line)
+        display.fillRect(0, 0, h1W, headerH / 2, GxEPD_WHITE);
+        display.setTextColor(GxEPD_BLACK);
+        display.setCursor(2, 2); // top of header
+        display.setTextSize(2);
+        display.print(timeStr);
+
+        // H1 second line: temperature + humidity
+        display.setCursor(2, headerH / 2 + 4);
+        display.setTextSize(2);
+        display.print(envStr);
+
+        // H2: SSID / PROVISIONING
+        bool invert_section = (highlight_section == 0 && invert); // only H2 is highlightable now
+        display.fillRect(h1W, 0, h2W, headerH/2, invert_section ? bg : fg);
+        display.setTextColor(invert_section ? fg : bg);
+        display.setCursor(h1W + 2, 2);
+        display.setTextSize(2);
+
+        String h2Display = h2Str;
+        int maxChars = h2W / charW;
+        if(h2Display.length() > maxChars) h2Display = h2Display.substring(0, maxChars);
+        display.print(h2Display);
+
+        // H3: VBAT / OATH RFSH
+        invert_section = (highlight_section == 1 && invert); // H3 highlightable
+        display.fillRect(h1W + h2W, 0, h3W, headerH, invert_section ? bg : fg);
+        display.setTextColor(invert_section ? fg : bg);
+        display.setCursor(h1W + h2W + 2, 2);
+        display.setTextSize(2);
+        display.print(h3Str);
+
+    } while(display.nextPage());
+}
+// Helper: format tm into a string
+String formatDate(const tm &t) {
+    // Example: "Monday, January 15 2026"
+    char buf[32];
+    strftime(buf, sizeof(buf), "%A, %B %d %Y", &t);
+    return String(buf);
+}
+void drawBody(const Date &d, tm now = getTime()) {
+    int headerH = display.height() * 16 / 100;
+    int bodyH = display.height() - headerH;
+
+    int leftW = display.width() * 10 / 100;
+    int midW  = display.width() * 80 / 100;
+    int rightW = display.width() - leftW - midW;
+
+    display.setPartialWindow(0, headerH, display.width(), bodyH);
+    display.firstPage();
+    do {
+        // Left section
+        display.fillRect(0, headerH, leftW, bodyH, GxEPD_WHITE);
+        display.setTextColor(GxEPD_BLACK);
+        display.setCursor(5, headerH + bodyH / 2 - 4);
+        display.setTextSize(2);
+        display.print("<-");
+
+        // Right section
+        display.fillRect(leftW + midW, headerH, rightW, bodyH, GxEPD_WHITE);
+        display.setTextColor(GxEPD_BLACK);
+        display.setCursor(leftW + midW + 5, headerH + bodyH / 2 - 4);
+        display.setTextSize(2);
+        display.print("->");
+
+        // Middle section
+        display.fillRect(leftW, headerH, midW, bodyH, GxEPD_WHITE);
+        display.setTextColor(GxEPD_BLACK);
+        display.setCursor(leftW + 5, headerH);
+        display.setTextSize(2);
+
+        // Convert Date to tm
+        tm nowTm = dateToTm(d);
+        String dateStr = formatDate(nowTm);
+        display.println(dateStr);
+
+        if (!viewingEvents) {
+            // --- FORECAST DISPLAY ---
+            auto it = forecast_map.find(d);
+            if (it != forecast_map.end()) {
+                const Forecast &fc = it->second;
+
+                display.print("Weather: ");
+                switch(fc.weather_code_daily) {
+                    case CLEAR_SKIES: display.println("Clear"); break;
+                    case CLOUDY: display.println("Cloudy"); break;
+                    case OVERCAST: display.println("Overcast"); break;
+                    case FOGGY: display.println("Foggy"); break;
+                    case DRIZZLE: display.println("Drizzle"); break;
+                    case RAINY: display.println("Rain"); break;
+                    case SNOWY: display.println("Snow"); break;
+                    case STORMY: display.println("Storm"); break;
+                    default: display.println("Unknown"); break;
+                }
+                display.printf("Min: %.1f C Max: %.1f C\n", fc.temperature_daily_min, fc.temperature_daily_max);
+
+                // Hourly table as before (rows, two columns)
+                display.println();
+                display.setTextSize(1);
+                tm currTime = now;
+                bool isToday = (d.year == currTime.tm_year &&
+                                d.month == currTime.tm_mon &&
+                                d.day == currTime.tm_mday);
+                int startHour = isToday ? currTime.tm_hour : 0;
+                int rowHeight = 10;
+                int leftColX = leftW + 5;
+                int rightColX = leftW + midW / 2 + 5;
+                auto starty = display.getCursorY();
+                for (int h = startHour; h < 24; ++h) {
+                    int colX = (h < 12) ? leftColX : rightColX;
+                    int row = ((h) % 12);
+                    int y = starty + row * rowHeight;
+
+                    bool invert = isToday && h == currTime.tm_hour;
+                    uint16_t fg = invert ? GxEPD_WHITE : GxEPD_BLACK;
+                    uint16_t bg = invert ? GxEPD_BLACK : GxEPD_WHITE;
+
+                    display.fillRect(colX, y, midW / 2 - 10, rowHeight, bg);
+                    display.setTextColor(fg);
+                    display.setCursor(colX, y);
+
+                    char hourStr[15];
+                    snprintf(hourStr, sizeof(hourStr), "%02d:00", h);
+                    display.print(hourStr);
+                    display.print(" | ");
+                    display.printf("%.1f C | ", fc.temperature_hourly[h]);
+
+                    switch(fc.weather_code_hourly[h]) {
+                        case CLEAR_SKIES: display.println("Clear"); break;
+                        case CLOUDY: display.println("Cloudy"); break;
+                        case OVERCAST: display.println("Overcast"); break;
+                        case FOGGY: display.println("Foggy"); break;
+                        case DRIZZLE: display.println("Drizzle"); break;
+                        case RAINY: display.println("Rain"); break;
+                        case SNOWY: display.println("Snow"); break;
+                        case STORMY: display.println("Storm"); break;
+                        default: display.println("Unknown"); break;
+                    }
+                }
+            }
+
+            // --- EVENT COUNT DISPLAY ---
+            auto range = event_map.equal_range(d);
+            int eventCount = std::distance(range.first, range.second);
+            if (eventCount > 0) {
+                display.println();
+                display.setTextSize(2);
+                display.print(eventCount);
+                display.println(" Events on this day. Press ENTER to browse.");
+            }
+
+        } else {  auto range = event_map.equal_range(d);
+            int eventCount = std::distance(range.first, range.second);
+
+            if (eventCount == 0) {
+                display.println("No events to display.");
+            } else {
+                // Advance iterator to current eventIndex
+                auto it = range.first;
+                std::advance(it, eventIndex % eventCount);
+                const Event &ev = it->second;
+
+                display.setTextSize(2);
+
+                // --- Extra blank line before summary ---
+                display.println();
+
+                // --- Center the text horizontally ---
+                int bodyWidth = midW - 10; // margin
+                int cursorX = leftW + 5;
+
+                // Helper lambda to center text
+                auto printCentered = [&](const String &s) {
+                    int16_t x1, y1;
+                    uint16_t w, h;
+                    display.getTextBounds(s, 0, 0, &x1, &y1, &w, &h);
+                    display.setCursor(cursorX + (bodyWidth - w)/2, display.getCursorY());
+                    display.println(s);
+                };
+
+                // Summary
+                printCentered("Summary:");
+                printCentered(ev.summary);
+
+                // Description
+                printCentered("Description:");
+                printCentered(ev.description);
+
+                // Start / End times
+                char buf[32];
+                strftime(buf, sizeof(buf), "%d/%m/%Y %H:%M:%S", &ev.startTime);
+                printCentered(String("Start: ") + buf);
+                strftime(buf, sizeof(buf), "%d/%m/%Y %H:%M:%S", &ev.endTime);
+                printCentered(String("End:   ") + buf);
+
+                // Event counter [current/total] below
+                display.println();
+                display.setTextSize(2);
+                printCentered("[" + String(eventIndex+1) + "/" + String(eventCount) + "]");
+
+                // Exit label at the bottom
+                display.println();
+                printCentered("Press ENTER to exit");
+            }
+
+        }
+
+    } while(display.nextPage());
+}
+
+// Full refresh
+void fullRefresh(Date &d) {
+    display.setFullWindow();
+    display.firstPage();
+    do {
+        drawHeader(selected == 0, selected == 0 ? header_section : -1);
+        drawBody(d);
+    } while(display.nextPage());
+    partial_count = 0;
+}
+// Helper: format tm into a string
+
+int lastMinute = -1; // global/static, stores last displayed minute
+
+void updateTimePartial() {
+    tm now = getTime();
+    if(now.tm_min != lastMinute) {
+        lastMinute = now.tm_min;
+
+        // Read temperature & humidity
+        sensors_event_t humidityEvent, tempEvent;
+        if (sht4.getEvent(&humidityEvent, &tempEvent)) {
+            humidity = humidityEvent.relative_humidity;
+            temperature = tempEvent.temperature;
+        }
+
+        // Prepare HH:MM string
+        char timeStr[6];
+        snprintf(timeStr, sizeof(timeStr), "%02d:%02d", now.tm_hour, now.tm_min);
+
+        // Prepare temperature + humidity string
+        char envStr[20];
+        snprintf(envStr, sizeof(envStr), "%.1f""C %.0f%%RH", temperature, humidity);
+
+        // Calculate H1 width (same as in drawHeader)
+        int headerH = display.height() * 16 / 100; // updated header height
+        int charW = 6 * 2; // textSize=2
+        int h1W = 5 * charW + charW;
+
+        // Partial update for H1 only
+        display.setPartialWindow(0, 0, h1W, headerH);
+        display.firstPage();
+        do {
+            display.fillRect(0, 0, h1W, headerH, GxEPD_WHITE);
+            display.setTextColor(GxEPD_BLACK);
+
+            // Top line: time
+            display.setCursor(2, 2);
+            display.setTextSize(2);
+            display.print(timeStr);
+
+            // Second line: temp + humidity
+            display.setCursor(2, headerH / 2 + 4);
+            display.setTextSize(2);
+            display.print(envStr);
+
+        } while(display.nextPage());
+    }
+}
+
+
+void provisioning()
+{
+    Serial.println("Starting SoftAP WiFi provisioning (Arduino WiFiProv)");
+
+    // Stop any previous session and disconnect WiFi
+    WiFiProv.endProvision();
+    if (WiFi.status() == WL_CONNECTED) {
+        WiFi.disconnect(true, true);
+    }
+
+    // --- Display instructions on EPAPER ---
+    display.fillScreen(GxEPD_WHITE);
+    display.setTextColor(GxEPD_BLACK);
+    display.setCursor(0, 20);
+    display.setTextSize(2);
+    display.println("WiFi Provisioning");
+    display.println();
+    display.println("1. Open provisioning app");
+    display.println("2. Follow instructions to connect device");
+    display.println("Press any button to cancel");
+    display.display(true); // full refresh
+
+    // BLE device name shown on phone
+    const char *service_name = "CALENDAR";
+    const char *pop = nullptr; // optional proof-of-possession
+
+    // Start provisioning (SoftAP)
+    WiFiProv.beginProvision(
+            NETWORK_PROV_SCHEME_SOFTAP,
+            NETWORK_PROV_SCHEME_HANDLER_NONE,
+            NETWORK_PROV_SECURITY_0,
+            pop,
+            service_name,
+            0, 0, true
+    );
+
+    Serial.println("Waiting for provisioning to complete...");
+
+    // --- Wait for WiFi connection or cancellation ---
+    bool canceled = false;
+    while (WiFi.status() != WL_CONNECTED && !canceled) {
+        delay(100);
+
+        // Check buttons
+        if (btn_pressed(BTN_UP) || btn_pressed(BTN_DOWN) ||
+            btn_pressed(BTN_LEFT) || btn_pressed(BTN_RIGHT) || btn_pressed(BTN_ENTER)) {
+            Serial.println("Provisioning canceled by user");
+            canceled = true;
+            break;
+        }
+    }
+
+    // End provisioning session cleanly
+    WiFiProv.endProvision();
+
+    if (!canceled) {
+        Serial.println("Provisioning complete");
+    }
+
+            String new_ssid = prefs.getString("sta_ssid", "");
+            String new_pass = prefs.getString("sta_pass", "");
+
+            prefs.end();
+            prefs.begin("main", false);
+
+            Serial.print("SSID: ");
+            Serial.println(new_ssid);
+            Serial.print("Password: ");
+            Serial.println(new_pass);
+            WiFiProv.endProvision();
+            // Update UI
+        }
+
+
+void refresh() {
+    Serial.println("Getting fresh token pair...");
+
+    // Clear the display
+    display.fillScreen(GxEPD_WHITE);
+
+        display.setCursor(10, 20);
+        display.setTextColor(GxEPD_BLACK);
+        display.setTextSize(2);
+        display.print("Listening for access code on serial...");
+    display.display();
+
+    // Regenerate token pair (user-implemented)
+    regenTokenPair();
+
+    // Trigger full refresh of UI
+
+    Serial.println("Refresh complete");
+}
+
+void staticDraw(const Date &d, tm now) {
+    // Set full window for e-paper
+    selected = 1;
+    viewingEvents=0;
+    display.setFullWindow();
+    display.firstPage();
+    do {
+        // Header: dynamic like normal
+        drawHeader(selected == 0, selected == 0 ? header_section : -1,now);
+
+        // Body: date-specific
+        drawBody(d,now);
+
+
+
+    } while(display.nextPage());
+}
+
+void loopUI(Date currentDate) {
+    unsigned long idleStart = millis();      // start idle timer
+    unsigned long downHoldStart = 0;         // track BTN_DOWN hold
+    const unsigned long idleTimeout = 30000; // 30 seconds
+    const unsigned long holdTimeout = 3000;  // 3 seconds
+
+    while (true)
+    {
+        unsigned long nowMillis = millis();
+        updateTimePartial(); // keep time updated
+        bool updated = false;
+
+        bool anyButtonPressed = false;
+
+        // Navigate header/body
+        if (btn_pressed(BTN_UP)) {
+            selected = 0;
+            updated = true;
+            anyButtonPressed = true;
+        }
+        if (btn_pressed(BTN_DOWN)) {
+            selected = 1;
+            updated = true;
+            anyButtonPressed = true;
+
+            // Handle BTN_DOWN hold for exit
+            if (downHoldStart == 0) downHoldStart = nowMillis;
+            else if (nowMillis - downHoldStart >= holdTimeout) {
+                Serial.println("Exit: BTN_DOWN held 3s");
+                return; // exit loop
+            }
+        } else {
+            downHoldStart = 0; // reset hold if button released
+        }
+        if (viewingEvents) {
+            auto range = event_map.equal_range(currentDate);
+            int eventCount = std::distance(range.first, range.second);
+
+            if (btn_pressed(BTN_LEFT)) {
+                if (eventCount > 0) eventIndex = (eventIndex - 1 + eventCount) % eventCount;
+                updated = true;
+            }
+            if (btn_pressed(BTN_RIGHT)) {
+                if (eventCount > 0) eventIndex = (eventIndex + 1) % eventCount;
+                updated = true;
+            }
+            if (selected == 1 && btn_pressed(BTN_ENTER)) {
+                viewingEvents = false;
+                updated = true;
+            }
+        }
+        else
+        {
+            if (selected == 1 && btn_pressed(BTN_ENTER)) {
+                viewingEvents = true;
+                updated = true;
+            }
+        }
+        // Body left/right changes date
+        if (selected == 1) {
+            if (btn_pressed(BTN_LEFT) && !viewingEvents) {
+                currentDate.prevDay();
+                updated = true;
+                anyButtonPressed = true;
+            }
+            if (btn_pressed(BTN_RIGHT) && !viewingEvents ){
+                currentDate.nextDay();
+                updated = true;
+                anyButtonPressed = true;
+            }
+        }
+        else { // header navigation
+            if (btn_pressed(BTN_LEFT)) {
+                header_section=0;
+                updated = true;
+                anyButtonPressed = true;
+            }
+            if (btn_pressed(BTN_RIGHT)) {
+                header_section=1;
+                updated = true;
+                anyButtonPressed = true;
+            }
+        }
+
+        // Header actions (provisioning, refresh)
+        if (selected == 0 && btn_pressed(BTN_ENTER)) {
+            anyButtonPressed = true;
+            if (header_section == 0) provisioning();
+            else if (header_section == 1) refresh();
+            fullRefresh(currentDate);
+            updated = true;
+        }
+
+        // Body ENTER: events view toggle
+        if (selected == 1 && btn_pressed(BTN_ENTER)) {
+            anyButtonPressed = true;
+            // toggle viewing events for the day
+
+            fullRefresh(currentDate);
+            updated = true;
+        }
+
+        // Update idle timer
+        if (anyButtonPressed) idleStart = nowMillis;
+
+        // Partial or full redraw
+        if (updated) {
+            partial_count++;
+            if (partial_count >= PARTIAL_LIMIT) {
+                display.setFullWindow();
+                display.firstPage();
+                do {
+                    drawHeader(selected == 0, selected == 0 ? header_section : -1);
+                    drawBody(currentDate);
+                } while(display.nextPage());
+                partial_count = 0;
+            } else {
+                drawHeader(selected == 0, selected == 0 ? header_section : -1);
+                drawBody(currentDate);
+            }
+            updated = false;
+        }
+
+
+
+        // --- Exit conditions ---
+        if (nowMillis - idleStart >= idleTimeout) {
+            Serial.println("Exit: idle timeout 30s");
+            return; // exit loop
+        }
+
+        delay(10); // small delay to avoid busy loop
+    }
+}
 void manual()
 {
     DBG_PRINTLN("Manual!");
 
-    //Fetch fresh data
-    networkSync();
-    // User mode....
+    //TEST SPACE!
+    pinMode(BTN_UP,    INPUT);
+    pinMode(BTN_DOWN,  INPUT);
+    pinMode(BTN_LEFT,  INPUT);
+    pinMode(BTN_RIGHT, INPUT);
+    pinMode(BTN_ENTER, INPUT);
+    bool updated=false;
 
+    auto now = getTime();
+    if (now.tm_year<120)
+    {
+        time_t t;
+        prefs.getBytes("lastTime", &t, sizeof(t));
+        //Boots ~1 min apart
+        auto boots_left = prefs.getUShort("bootsLeft");
 
-    //...
+        auto boot_count = prefs.getUShort("bootsTillSync")-boots_left+1;
 
-    //User interactive mode ending - do a final update to everything before shutdown
+        t+= boot_count * 60;
+        setenv("TZ", "CET-1CEST,M3.5.0/2,M10.5.0/3", 1);
+        tzset();
+        now = *localtime(&t);
+    }
     networkSync();
     saveToCache();
+
+    auto nowdate = Date(now.tm_year,now.tm_mon,now.tm_mday);
+    // Initial render
+    drawBody(nowdate);
+    drawHeader(selected == 0, selected == 0 ? header_section : -1);
+    loopUI(nowdate);
+    //disconnect WiFi as it's no longer needed
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    staticDraw(nowdate,now);
+    auto now_t = std::mktime(&now);
+
+    prefs.putBytes("lastTime", &now_t, sizeof(now_t));
+
     prefs.putUShort("bootsLeft",prefs.getUShort("bootsTillSync"));
     end();
 }
@@ -380,6 +736,9 @@ void automatic()
         saveToCache();
 
         now = getTime();
+        //disconnect WiFi as it's no longer needed
+        WiFi.disconnect(true);
+        WiFi.mode(WIFI_OFF);
         auto now_t = std::mktime(&now);
         prefs.putBytes("lastTime", &now_t, sizeof(now_t));
 
@@ -409,17 +768,7 @@ void automatic()
     }
     // Print
 
-    display.init(115200, true, 2, false);
-    display.setRotation(0); // optional, 0-3 depending on orientation
 
-    display.fillScreen(GxEPD_WHITE);
-    display.setCursor(0, 0);
-    display.setTextColor(GxEPD_BLACK);
-    // sda 8 scl 9
-    display.setTextSize(2);
-    display.println(&now, "%A, %B %d %Y %H:%M:%S");
-    display.display();
-    display.hibernate();
 
     Serial.print("Automatic boot - boots till sync #:");
     Serial.println(boots_left);
@@ -429,36 +778,30 @@ void automatic()
     Serial.print(now.tm_min);
     Serial.print(":");
     Serial.print(now.tm_sec);
-    delay(500);
+    auto nowdate = Date(now.tm_year,now.tm_mon,now.tm_mday);
+    staticDraw(nowdate, now);
+
     //Turn everything off
     end();
 
 }
-void end()
-{
-    prefs.end();
-    DBG_PRINTLN("Buhbye!");
-    gpio_set_level(GPIO_NUM_41,1); //DONE
-    gpio_set_level(GPIO_NUM_21,1); //stop hold
-    while(true) delay(500);
-}
-
-
-
-std::multimap<Date, Event> event_map;
-std::map<Date, Forecast> forecast_map;
-
 void setup(void *arg)
 {
-    wifi_retries = 20;
+    wifi_retries = 30;
     gpio_set_direction(GPIO_NUM_40,GPIO_MODE_INPUT); //drain cap
     gpio_pulldown_en(GPIO_NUM_40);
+
+    vbat = battery_voltage();
+    if (vbat<5.8)
+    {
+        end();
+    }
+
     Serial.begin(115200);
     DBG_PRINTLN("Woken up!");
     DBG_PRINT("Pin 40 (WAKEREASON): ");
     DBG_PRINTLN(is_manual);
     prefs.begin("main",false);
-
     fram.begin();
 
     if(!prefs.isKey("bootsTillSync"))
@@ -479,56 +822,25 @@ void setup(void *arg)
     pinMode(35,OUTPUT);
     pinMode(16,OUTPUT);
     pinMode(17,OUTPUT);
-    //lvgl test
+
     display.init(115200, true, 2, false);
     display.setRotation(0); // optional, 0-3 depending on orientation
+    display.clearScreen();
+    display.display();
     //display.invertDisplay(true);
-    lv_port_disp_init();
 
-    //TEST SPACE!
-    pinMode(BTN_UP,    INPUT);
-    pinMode(BTN_DOWN,  INPUT);
-    pinMode(BTN_LEFT,  INPUT);
-    pinMode(BTN_RIGHT, INPUT);
-    pinMode(BTN_ENTER, INPUT);
-    create_ui();
-    style_focus_init();
-
-    /* One initial render */
-    while (true)
-    {
-        lv_tick_inc(50);
-        lv_timer_handler();
-        delay(50);
+    sht4.begin();
+    sensors_event_t humidityEvent, tempEvent;
+    if (sht4.getEvent(&humidityEvent, &tempEvent)) {
+        humidity = humidityEvent.relative_humidity;
+        temperature = tempEvent.temperature;
     }
-
-
-
-    end();
 
     // BRANCH: WAKEREASON
     if(is_manual) manual();
     else automatic();
     end();
 
-
-
-
-    //test();
-
-    if(is_manual)
-    {
-        refreshToken();
-    }
-
-    networkSync();
-    Serial.println(event_map.size());
-
-    //disconnect WiFi as it's no longer needed
-    WiFi.disconnect(true);
-    WiFi.mode(WIFI_OFF);
-
-    end();
     auto creator = static_cast<TaskHandle_t>(arg);
     xTaskNotifyGive(creator);
     vTaskDelete(nullptr);
@@ -554,7 +866,6 @@ void test()
     sht4.setPrecision(SHT4X_HIGH_PRECISION);
 
     sensors_event_t humidity, temp;
-
     //uint32_t timestamp = millis();
     sht4.getEvent(&humidity, &temp);// populate temp and humidity objects with fresh data
     //timestamp = millis() - timestamp;

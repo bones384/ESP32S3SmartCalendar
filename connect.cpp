@@ -10,7 +10,7 @@ bool connect()
         char retries = wifi_retries;
         DBG_PRINT("Connecting to ");
         DBG_PRINTLN(ssid);
-        WiFi.begin(ssid, password);
+        WiFi.begin();
         while (WiFi.status() != WL_CONNECTED) {
             delay(500);
             DBG_PRINT(".");

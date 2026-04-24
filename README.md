@@ -33,9 +33,9 @@ A full BOM can be found in the project report in the docs directory.
 ## Media
 
 High-level system diagram:
-<img width="544" height="449" alt="image" src="https://github.com/user-attachments/assets/981102e2-b735-4304-a960-78f7c19b18a2" />
+<img width="544" height="449" alt="system-diagram" src="https://github.com/user-attachments/assets/c2fffdd7-6536-4cf1-9ea9-e44c2885c831" />
 Software flow diagram:
-<img width="2040" height="864" alt="diagram-export-12 02 2026-20_51_37" src="https://github.com/user-attachments/assets/5ade8727-b253-4612-960f-735dfa93b6a8" />
+<img width="2040" height="864" alt="flowidag" src="https://github.com/user-attachments/assets/5e7ae218-012a-4064-a2d2-9421ea8371d6" />
 
 ## Notes
 Includes full schematic (.sch) and PCB layout (.brd) files.
